@@ -10,6 +10,10 @@ struct Uniforms {
     tile_h: f32,
     cell_w: f32,
     cell_h: f32,
+    hover_entity: u32,
+    selected_entity: u32,
+    _pad0: u32,
+    _pad1: u32,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -20,12 +24,13 @@ struct Instance {
     @location(0) cell: vec2<u32>,   // absolute cell x, y
     @location(1) atlas: vec2<u32>,  // col, row
     @location(2) anim: vec2<u32>,   // frames, fps
-    @location(3) misc: vec2<u32>,   // flags (bit0 mirror), layer (0 terrain, 1 overlay, 2 object)
+    @location(3) misc: vec2<u32>,   // x: flags (bit0 mirror) | layer << 8 (0 terrain, 1 overlay, 2 object); y: entity index
 };
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
+    @location(1) @interpolate(flat) emphasis: u32, // 0 none, 1 hover, 2 selected
 };
 
 @vertex
@@ -42,7 +47,7 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
     let world = tl + c * vec2<f32>(u.cell_w, u.cell_h);
     var clip = u.view_proj * vec4<f32>(world, 0.0, 1.0);
 
-    let layer = inst.misc.y;
+    let layer = inst.misc.x >> 8u;
     var z = 0.999;
     if (layer == 1u) {
         z = 0.998;
@@ -61,9 +66,20 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
     }
     let uv = vec2<f32>((f32(inst.atlas.x + frame) + cu) / u.atlas_cols, (f32(inst.atlas.y) + c.y) / u.atlas_rows);
 
+    var emphasis = 0u;
+    let entity = inst.misc.y;
+    if (entity != 0u) {
+        if (entity == u.selected_entity) {
+            emphasis = 2u;
+        } else if (entity == u.hover_entity) {
+            emphasis = 1u;
+        }
+    }
+
     var out: VsOut;
     out.pos = clip;
     out.uv = uv;
+    out.emphasis = emphasis;
     return out;
 }
 
@@ -73,5 +89,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     if (color.a < 0.5) {
         discard;
     }
-    return vec4<f32>(color.rgb, 1.0);
+    var rgb = color.rgb;
+    if (in.emphasis == 1u) {
+        rgb = min(rgb * 1.18 + 0.04, vec3<f32>(1.0));
+    } else if (in.emphasis == 2u) {
+        rgb = mix(rgb, vec3<f32>(1.0, 0.92, 0.55), 0.35);
+    }
+    return vec4<f32>(rgb, 1.0);
 }

@@ -14,5 +14,5 @@ pub const SPEC_VERSION: u16 = 0;
 pub const CHUNK_SIZE: u16 = 64;
 
 pub use chunk::{Chunk, ChunkObject, NO_PERIOD};
-pub use level::{Level, LevelManifest};
+pub use level::{EntityDef, Level, LevelManifest};
 pub use tileset::{TileClass, TileDef, Tileset};

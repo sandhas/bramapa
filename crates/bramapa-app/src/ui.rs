@@ -1,6 +1,6 @@
 //! egui overlay: stats panel and controls help.
 
-use bramapa_core::{Level, Tileset};
+use bramapa_core::{EntityDef, Level, Tileset};
 use bramapa_render::{Camera, RenderStats};
 
 pub struct FpsCounter {
@@ -46,6 +46,7 @@ pub struct CursorCell {
     pub y: u32,
     pub terrain: u16,
     pub overlay: u16,
+    pub entity: u16,
 }
 
 pub struct Model<'a> {
@@ -58,6 +59,8 @@ pub struct Model<'a> {
     pub level_source: &'a str,
     pub tileset_source: &'a str,
     pub cursor_cell: Option<CursorCell>,
+    pub hover_entity: Option<&'a EntityDef>,
+    pub selected_entity: Option<&'a EntityDef>,
     pub adapter: &'a str,
     pub show: bool,
 }
@@ -148,6 +151,26 @@ pub fn draw(ctx: &egui::Context, m: &Model) {
                         }
                         None => {
                             ui.label("fora da grade");
+                        }
+                    }
+                    ui.end_row();
+                    ui.label("Entidade");
+                    match m.hover_entity {
+                        Some(e) => {
+                            ui.label(format!("{} · {}", e.name, e.id));
+                        }
+                        None => {
+                            ui.label("—");
+                        }
+                    }
+                    ui.end_row();
+                    ui.label("Selecionada");
+                    match m.selected_entity {
+                        Some(e) => {
+                            ui.strong(format!("{} · {}", e.name, e.id));
+                        }
+                        None => {
+                            ui.label("clique numa entidade");
                         }
                     }
                     ui.end_row();

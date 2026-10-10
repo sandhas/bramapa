@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use bramapa_core::{Level, Tileset};
-use bramapa_render::{AtlasTexture, Camera, PlaceholderAtlas, TilemapRenderer};
+use bramapa_render::{AtlasTexture, Camera, Highlight, PlaceholderAtlas, TilemapRenderer};
 use glam::Vec2;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, TouchPhase, WindowEvent};
@@ -33,6 +33,8 @@ pub struct Options {
     pub vsync: bool,
     pub show_ui: bool,
     pub fullscreen: bool,
+    /// Entity index selected at start (0 = none).
+    pub select: u16,
     pub screenshot: Option<PathBuf>,
 }
 
@@ -48,6 +50,7 @@ impl Default for Options {
             vsync: true,
             show_ui: true,
             fullscreen: false,
+            select: 0,
             screenshot: None,
         }
     }
@@ -126,9 +129,15 @@ struct Scene {
 struct Input {
     dragging: bool,
     last_cursor: Option<Vec2>,
+    /// Where the current press started (to tell a click from a drag).
+    press_origin: Option<Vec2>,
     cursor: Vec2,
     touch_id: Option<u64>,
     keys: KeyState,
+    /// Entity index under the cursor (0 = none).
+    hover_entity: u16,
+    /// Entity index picked by the last click (0 = none).
+    selected_entity: u16,
 }
 
 #[derive(Default)]
@@ -163,12 +172,14 @@ impl App {
         camera.center = bramapa_render::iso::IsoGeometry::DEFAULT.cell_center(cx, cy);
         camera.zoom = opts.zoom.clamp(camera.min_zoom, camera.max_zoom);
         let show_ui = opts.show_ui;
+        let mut input = Input::default();
+        input.selected_entity = opts.select;
         Ok(Self {
             opts,
             content,
             scene: None,
             camera,
-            input: Input::default(),
+            input,
             start: Instant::now(),
             last_frame: Instant::now(),
             frame: 0,
@@ -317,6 +328,10 @@ impl App {
                 &self.camera,
                 &scene.atlas,
                 time,
+                Highlight {
+                    hover: self.input.hover_entity,
+                    selected: self.input.selected_entity,
+                },
             );
         }
 
@@ -332,6 +347,12 @@ impl App {
             level_source: &self.content.level_source,
             tileset_source: &self.content.tileset_source,
             cursor_cell,
+            hover_entity: self.content.level.manifest.entity(self.input.hover_entity),
+            selected_entity: self
+                .content
+                .level
+                .manifest
+                .entity(self.input.selected_entity),
             adapter: &scene.gpu.adapter_info,
             show: self.show_ui,
         };
@@ -475,18 +496,28 @@ impl App {
             .level
             .chunks
             .get(&((x / cs) as i32, (y / cs) as i32));
-        let (terrain, overlay) = chunk
+        let (terrain, overlay, entity) = chunk
             .map(|ch| {
                 let i = ch.idx((x % cs) as u16, (y % cs) as u16);
-                (ch.terrain[i], ch.overlay[i])
+                (
+                    ch.terrain[i],
+                    ch.overlay[i],
+                    ch.entity_at((x % cs) as u16, (y % cs) as u16),
+                )
             })
-            .unwrap_or((0, 0));
+            .unwrap_or((0, 0, 0));
         Some(ui::CursorCell {
             x,
             y,
             terrain,
             overlay,
+            entity,
         })
+    }
+
+    /// Recompute the hovered entity from the cursor position.
+    fn update_hover(&mut self) {
+        self.input.hover_entity = self.cursor_cell().map_or(0, |c| c.entity);
     }
 }
 
@@ -539,14 +570,25 @@ impl ApplicationHandler for App {
                     self.input.last_cursor = Some(p);
                 }
                 self.input.cursor = p;
+                self.update_hover();
             }
             WindowEvent::MouseInput {
                 state,
                 button: MouseButton::Left | MouseButton::Middle,
                 ..
             } => {
-                self.input.dragging = state == ElementState::Pressed;
-                self.input.last_cursor = self.input.dragging.then_some(self.input.cursor);
+                let pressed = state == ElementState::Pressed;
+                if pressed {
+                    self.input.press_origin = Some(self.input.cursor);
+                } else if let Some(origin) = self.input.press_origin.take() {
+                    if (self.input.cursor - origin).length() < 4.0 {
+                        // A click, not a drag: select (or clear) the entity under the cursor.
+                        self.update_hover();
+                        self.input.selected_entity = self.input.hover_entity;
+                    }
+                }
+                self.input.dragging = pressed;
+                self.input.last_cursor = pressed.then_some(self.input.cursor);
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 let steps = match delta {
@@ -561,6 +603,7 @@ impl ApplicationHandler for App {
                     TouchPhase::Started if self.input.touch_id.is_none() => {
                         self.input.touch_id = Some(touch.id);
                         self.input.last_cursor = Some(p);
+                        self.input.press_origin = Some(p);
                         self.input.cursor = p;
                     }
                     TouchPhase::Moved if self.input.touch_id == Some(touch.id) => {

@@ -8,7 +8,7 @@ pub mod tilemap;
 
 pub use atlas::{AtlasTexture, PlaceholderAtlas};
 pub use camera::Camera;
-pub use tilemap::{RenderStats, TilemapRenderer};
+pub use tilemap::{Highlight, RenderStats, TilemapRenderer};
 
 /// Depth format used by the tilemap pipeline (the app creates the depth texture).
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;

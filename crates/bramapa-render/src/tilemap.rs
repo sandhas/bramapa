@@ -34,6 +34,16 @@ struct Uniforms {
     tile_h: f32,
     cell_w: f32,
     cell_h: f32,
+    hover_entity: u32,
+    selected_entity: u32,
+    _pad: [u32; 2],
+}
+
+/// Entity indices to emphasise this frame (0 = none).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Highlight {
+    pub hover: u16,
+    pub selected: u16,
 }
 
 struct LayerBuffer {
@@ -232,6 +242,7 @@ impl TilemapRenderer {
         camera: &Camera,
         atlas: &AtlasTexture,
         time: f32,
+        highlight: Highlight,
     ) {
         let uniforms = Uniforms {
             view_proj: camera.view_proj().to_cols_array_2d(),
@@ -243,6 +254,9 @@ impl TilemapRenderer {
             tile_h: self.geometry.tile_h,
             cell_w: self.geometry.cell_w,
             cell_h: self.geometry.cell_h,
+            hover_entity: highlight.hover as u32,
+            selected_entity: highlight.selected as u32,
+            _pad: [0; 2],
         };
         queue.write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
 
@@ -296,11 +310,12 @@ fn build_chunk(
             };
             let x = base_x + (i as u32 % size);
             let y = base_y + (i as u32 / size);
+            let entity = chunk.entity.as_ref().map_or(0, |e| e[i]);
             layers[layer_idx as usize].push(Instance {
                 cell: [x as u16, y as u16],
                 atlas: [t.col, t.row],
                 anim: [t.frames, t.fps],
-                misc: [0, layer_idx],
+                misc: [layer_idx << 8, entity],
             });
         }
     }
@@ -323,7 +338,10 @@ fn build_chunk(
             ],
             atlas: [t.col, t.row],
             anim: [t.frames, t.fps],
-            misc: [o.flags, 2],
+            misc: [
+                (o.flags & 0xff) | (2 << 8),
+                chunk.entity_at(o.cell_x as u16, o.cell_y as u16),
+            ],
         });
     }
     let make = |name: &str, v: &Vec<Instance>| -> Option<LayerBuffer> {

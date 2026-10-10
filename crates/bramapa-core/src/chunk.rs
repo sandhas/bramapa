@@ -8,6 +8,7 @@ use crate::{CHUNK_SIZE, SPEC_VERSION};
 const MAGIC: &[u8; 4] = b"BMCK";
 const HEADER_LEN: usize = 32;
 const FLAG_HAS_OBJECTS: u16 = 1;
+const FLAG_HAS_ENTITY: u16 = 2;
 
 /// Sentinel for "no period" in `period_start`/`period_end` (days since 1970-01-01).
 pub const NO_PERIOD: i32 = i32::MIN;
@@ -35,6 +36,8 @@ pub struct Chunk {
     /// `size * size` tile ids, row-major (`y` outer, `x` inner). 0 = empty.
     pub terrain: Vec<u16>,
     pub overlay: Vec<u16>,
+    /// Optional per-cell entity index into `LevelManifest::entities` (0 = none).
+    pub entity: Option<Vec<u16>>,
     pub objects: Vec<ChunkObject>,
     pub period_start: i32,
     pub period_end: i32,
@@ -49,6 +52,7 @@ impl Chunk {
             size: CHUNK_SIZE,
             terrain: vec![0; n],
             overlay: vec![0; n],
+            entity: None,
             objects: Vec::new(),
             period_start: NO_PERIOD,
             period_end: NO_PERIOD,
@@ -62,6 +66,24 @@ impl Chunk {
 
     pub fn has_period(&self) -> bool {
         self.period_start != NO_PERIOD
+    }
+
+    /// Entity index at a local cell (0 when the chunk has no entity layer).
+    #[inline]
+    pub fn entity_at(&self, x: u16, y: u16) -> u16 {
+        self.entity.as_ref().map_or(0, |e| e[self.idx(x, y)])
+    }
+
+    fn flags(&self) -> u16 {
+        (if self.objects.is_empty() {
+            0
+        } else {
+            FLAG_HAS_OBJECTS
+        }) | (if self.entity.is_some() {
+            FLAG_HAS_ENTITY
+        } else {
+            0
+        })
     }
 
     /// Serialize to the `.bmc` byte format.
@@ -78,13 +100,26 @@ impl Chunk {
             self.overlay.len()
         );
 
+        if let Some(e) = &self.entity {
+            ensure!(
+                e.len() == n,
+                "entity layer has {} cells, expected {n}",
+                e.len()
+            );
+        }
         let has_objects = !self.objects.is_empty();
-        let mut raw = Vec::with_capacity(n * 4 + self.objects.len() * 8 + 4);
+        let flags = self.flags();
+        let mut raw = Vec::with_capacity(n * 6 + self.objects.len() * 8 + 4);
         for v in &self.terrain {
             raw.extend_from_slice(&v.to_le_bytes());
         }
         for v in &self.overlay {
             raw.extend_from_slice(&v.to_le_bytes());
+        }
+        if let Some(e) = &self.entity {
+            for v in e {
+                raw.extend_from_slice(&v.to_le_bytes());
+            }
         }
         if has_objects {
             raw.extend_from_slice(&(self.objects.len() as u32).to_le_bytes());
@@ -101,9 +136,9 @@ impl Chunk {
         let mut out = Vec::with_capacity(HEADER_LEN + payload.len());
         out.extend_from_slice(MAGIC);
         out.extend_from_slice(&SPEC_VERSION.to_le_bytes());
-        out.extend_from_slice(&(if has_objects { FLAG_HAS_OBJECTS } else { 0 }).to_le_bytes());
+        out.extend_from_slice(&flags.to_le_bytes());
         out.extend_from_slice(&self.size.to_le_bytes());
-        out.push(if has_objects { 3 } else { 2 });
+        out.push(2 + has_objects as u8 + self.entity.is_some() as u8);
         out.push(0);
         out.extend_from_slice(&self.cx.to_le_bytes());
         out.extend_from_slice(&self.cy.to_le_bytes());
@@ -136,8 +171,9 @@ impl Chunk {
         ensure!(size == CHUNK_SIZE, "unsupported chunk_size {size}");
         let layer_count = bytes[10];
         let has_objects = flags & FLAG_HAS_OBJECTS != 0;
+        let has_entity = flags & FLAG_HAS_ENTITY != 0;
         ensure!(
-            layer_count == if has_objects { 3 } else { 2 },
+            layer_count == 2 + has_objects as u8 + has_entity as u8,
             "layer_count {layer_count} inconsistent with flags {flags:#x}"
         );
         let cx = i32_at(12);
@@ -163,6 +199,13 @@ impl Chunk {
         };
         let terrain = read_layer(0);
         let overlay = read_layer(n * 2);
+        let entity = if has_entity {
+            ensure!(raw.len() >= n * 6, "payload too short for entity layer");
+            need = n * 6;
+            Some(read_layer(n * 4))
+        } else {
+            None
+        };
         let mut objects = Vec::new();
         if has_objects {
             ensure!(raw.len() >= need + 4, "missing object count");
@@ -192,6 +235,7 @@ impl Chunk {
             size,
             terrain,
             overlay,
+            entity,
             objects,
             period_start,
             period_end,
@@ -251,6 +295,25 @@ mod tests {
         assert_eq!(i32::from_le_bytes(bytes[16..20].try_into().unwrap()), -2);
         let d = Chunk::decode(&bytes).unwrap();
         assert_eq!(c, d);
+    }
+
+    #[test]
+    fn roundtrip_with_entity_layer() {
+        let mut c = sample();
+        let n = c.terrain.len();
+        c.entity = Some((0..n).map(|i| (i % 5) as u16).collect());
+        let bytes = c.encode().unwrap();
+        assert_eq!(bytes[6] & 3, 3);
+        assert_eq!(bytes[10], 4);
+        let d = Chunk::decode(&bytes).unwrap();
+        assert_eq!(c, d);
+        assert_eq!(d.entity_at(3, 0), 3);
+        // entity without objects
+        c.objects.clear();
+        let bytes = c.encode().unwrap();
+        assert_eq!(bytes[6], 2);
+        assert_eq!(bytes[10], 3);
+        assert_eq!(Chunk::decode(&bytes).unwrap(), c);
     }
 
     #[test]

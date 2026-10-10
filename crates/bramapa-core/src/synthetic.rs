@@ -4,7 +4,9 @@
 use std::collections::HashMap;
 
 use crate::chunk::{Chunk, ChunkObject};
-use crate::level::{GridInfo, Level, LevelInfo, LevelManifest, ProjectionInfo, TilesetRef};
+use crate::level::{
+    EntityDef, GridInfo, Level, LevelInfo, LevelManifest, ProjectionInfo, TilesetRef,
+};
 use crate::{CHUNK_SIZE, SPEC_VERSION};
 
 pub mod tiles {
@@ -87,6 +89,7 @@ pub fn level(width: u32, height: u32, seed: u64) -> Level {
     for cy in 0..chunks_y {
         for cx in 0..chunks_x {
             let mut chunk = Chunk::empty(cx as i32, cy as i32);
+            let mut entity = vec![0u16; CHUNK_SIZE as usize * CHUNK_SIZE as usize];
             for ly in 0..CHUNK_SIZE {
                 for lx in 0..CHUNK_SIZE {
                     let gx = cx * cs + lx as u32;
@@ -127,6 +130,10 @@ pub fn level(width: u32, height: u32, seed: u64) -> Level {
                         }
                     };
                     chunk.terrain[i] = terrain;
+                    if terrain != tiles::OCEANO && terrain != tiles::AGUA {
+                        // Four fake "states" by quadrant, so hover/click can be exercised.
+                        entity[i] = 1 + (x >= cx0) as u16 + 2 * (y >= cy0) as u16;
+                    }
 
                     // Coastal town: a square patch east of the centre.
                     let tx = x - (cx0 + radius * 0.45);
@@ -179,6 +186,7 @@ pub fn level(width: u32, height: u32, seed: u64) -> Level {
                     }
                 }
             }
+            chunk.entity = Some(entity);
             chunks.insert((cx as i32, cy as i32), chunk);
         }
     }
@@ -207,6 +215,15 @@ pub fn level(width: u32, height: u32, seed: u64) -> Level {
             version: "0.0.1".into(),
         },
         period: None,
+        entities: ["Noroeste", "Nordeste", "Sudoeste", "Sudeste"]
+            .iter()
+            .enumerate()
+            .map(|(i, n)| EntityDef {
+                index: i as u16 + 1,
+                id: format!("estado:9{}", i + 1),
+                name: format!("Quadrante {n}"),
+            })
+            .collect(),
     };
     Level {
         manifest,
