@@ -109,6 +109,13 @@ tileset real pode usar outros ids; o que vale é o `tiles.toml` referenciado pel
 - **Atlas**: dimensões múltiplas de `cell_width`/`cell_height`, máximo 4096 × 4096 (limite seguro
   para GPUs móveis), potência de dois recomendada. Duas tiles nunca compartilham uma cell; cells
   não usadas são transparentes.
+- **Máscara de vizinhança (autotiling)**: 4 bits, `N = 1`, `E = 2`, `S = 4`, `W = 8`, bit ligado
+  quando o vizinho tem a **mesma `cover`**. Vizinhos em coordenadas de grade: N = `(x, y−1)`,
+  E = `(x+1, y)`, S = `(x, y+1)`, W = `(x−1, y)`. Fora da grade conta como "mesma cover" (a borda
+  do mapa não ganha contorno). O pipeline calcula a máscara; o motor só vê ids de tile.
+- **Ids das variantes de autotiling do placeholder**: `agua` usa `100 + máscara` (100..115),
+  `oceano` usa `120 + máscara` (120..135); todas animadas com 4 frames. Os ids base 2 e 3 continuam
+  valendo como `default` (máscara 15, cercado pela mesma cover).
 - **Direção das faixas de overlay** (rodovia, rio, ferrovia): no placeholder, a faixa segue o eixo
   `+x` da grade (entra pelo meio da aresta noroeste e sai pelo meio da sudeste), para que células
   consecutivas em `x` se emendem. Curvas e ramificações virão por autotiling com máscara.
