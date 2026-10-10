@@ -1,6 +1,7 @@
 //! egui overlay: stats panel and controls help.
 
-use bramapa_core::{EntityDef, Level, Tileset};
+use bramapa_core::data::{days_to_ymd, period_label, ymd_to_days};
+use bramapa_core::{DataStore, EntityDef, Level, PropertyData, Row, Tileset, Value};
 use bramapa_render::{Camera, RenderStats};
 
 pub struct FpsCounter {
@@ -63,12 +64,200 @@ pub struct Model<'a> {
     pub selected_entity: Option<&'a EntityDef>,
     pub adapter: &'a str,
     pub show: bool,
+    pub data: Option<&'a DataStore>,
 }
 
-pub fn draw(ctx: &egui::Context, m: &Model) {
+/// Mutable UI state that survives between frames.
+pub struct UiState {
+    /// Selected period range as years (inclusive).
+    pub year_start: i32,
+    pub year_end: i32,
+    /// Bounds offered by the sliders.
+    pub year_min: i32,
+    pub year_max: i32,
+}
+
+impl UiState {
+    pub fn new(data: Option<&DataStore>) -> Self {
+        let (lo, hi) = data
+            .and_then(|d| d.period_bounds)
+            .map(|(a, b)| (days_to_ymd(a).0, days_to_ymd(b).0))
+            .unwrap_or((2000, 2024));
+        Self {
+            year_start: lo,
+            year_end: hi,
+            year_min: lo,
+            year_max: hi,
+        }
+    }
+}
+
+/// `1332845` → `1.332.845`; floats keep one decimal with a comma.
+pub fn format_number(v: Value) -> String {
+    fn group(int: &str) -> String {
+        let bytes = int.as_bytes();
+        let mut out = String::new();
+        for (i, b) in bytes.iter().enumerate() {
+            if i > 0 && (bytes.len() - i) % 3 == 0 {
+                out.push('.');
+            }
+            out.push(*b as char);
+        }
+        out
+    }
+    match v {
+        Value::I64(i) => {
+            let s = i.abs().to_string();
+            format!("{}{}", if i < 0 { "-" } else { "" }, group(&s))
+        }
+        Value::F64(f) => {
+            let text = format!("{:.1}", f.abs());
+            let (int, frac) = text.split_once('.').unwrap_or((&text, "0"));
+            format!("{}{},{}", if f < 0.0 { "-" } else { "" }, group(int), frac)
+        }
+        Value::Str(_) => String::new(),
+    }
+}
+
+fn row_in_range(r: &Row, year_start: i32, year_end: i32) -> bool {
+    let lo = ymd_to_days(year_start, 1, 1);
+    let hi = ymd_to_days(year_end, 12, 31);
+    r.end >= lo && r.start <= hi
+}
+
+fn sparkline(ui: &mut egui::Ui, p: &PropertyData, rows: &[&Row]) {
+    let values: Vec<f64> = rows
+        .iter()
+        .filter_map(|r| match r.value {
+            Value::I64(i) => Some(i as f64),
+            Value::F64(f) => Some(f),
+            Value::Str(_) => None,
+        })
+        .collect();
+    if values.len() < 2 {
+        return;
+    }
+    let (w, h) = (ui.available_width().min(320.0), 44.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::hover());
+    let (min, max) = values
+        .iter()
+        .fold((f64::MAX, f64::MIN), |(a, b), v| (a.min(*v), b.max(*v)));
+    let span = if max > min { max - min } else { 1.0 };
+    let pts: Vec<egui::Pos2> = values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let x = rect.left() + rect.width() * i as f32 / (values.len() - 1) as f32;
+            let y = rect.bottom() - 2.0 - (rect.height() - 4.0) * ((v - min) / span) as f32;
+            egui::pos2(x, y)
+        })
+        .collect();
+    let painter = ui.painter();
+    painter.rect_filled(rect, 2.0, egui::Color32::from_black_alpha(60));
+    painter.add(egui::Shape::line(
+        pts.clone(),
+        egui::Stroke::new(1.5, egui::Color32::from_rgb(255, 205, 90)),
+    ));
+    if let Some(last) = pts.last() {
+        painter.circle_filled(*last, 2.5, egui::Color32::from_rgb(255, 205, 90));
+    }
+    let _ = p;
+}
+
+fn entity_panel(ctx: &egui::Context, m: &Model, st: &mut UiState) {
+    let Some(entity) = m.selected_entity else {
+        return;
+    };
+    egui::Window::new(format!("{} · {}", entity.name, entity.id))
+        .id(egui::Id::new("entity-panel"))
+        .default_pos([12.0, 360.0])
+        .default_width(360.0)
+        .show(ctx, |ui| {
+            let Some(data) = m.data else {
+                ui.label("Sem dados carregados (use --data <dir de build>).");
+                return;
+            };
+            ui.horizontal(|ui| {
+                ui.label("Período");
+                ui.add(egui::DragValue::new(&mut st.year_start).range(st.year_min..=st.year_max));
+                ui.label("a");
+                ui.add(egui::DragValue::new(&mut st.year_end).range(st.year_min..=st.year_max));
+                if st.year_end < st.year_start {
+                    st.year_end = st.year_start;
+                }
+                if ui.small_button("tudo").clicked() {
+                    st.year_start = st.year_min;
+                    st.year_end = st.year_max;
+                }
+            });
+            ui.add(egui::Slider::new(&mut st.year_start, st.year_min..=st.year_max).text("de"));
+            ui.add(egui::Slider::new(&mut st.year_end, st.year_start..=st.year_max).text("até"));
+            ui.separator();
+            let props = data.for_entity(&entity.id);
+            if props.is_empty() {
+                ui.label("Nenhuma propriedade para esta entidade.");
+                return;
+            }
+            egui::ScrollArea::vertical()
+                .max_height(420.0)
+                .show(ui, |ui| {
+                    for (p, rows) in props {
+                        let rows: Vec<&Row> = rows
+                            .iter()
+                            .filter(|r| row_in_range(r, st.year_start, st.year_end))
+                            .collect();
+                        let header = if p.unit.is_empty() {
+                            p.name.clone()
+                        } else {
+                            format!("{} ({})", p.name, p.unit)
+                        };
+                        egui::CollapsingHeader::new(header)
+                            .id_salt(&p.id)
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                ui.small(format!("{} · {} · {}", p.id, p.periodicity, p.source));
+                                if rows.is_empty() {
+                                    ui.label("sem valores no período");
+                                    return;
+                                }
+                                if let Some(last) = rows.last() {
+                                    ui.horizontal(|ui| {
+                                        ui.strong(format_number(last.value));
+                                        ui.label(format!(
+                                            "em {}",
+                                            period_label(last.start, last.end)
+                                        ));
+                                    });
+                                }
+                                sparkline(ui, p, &rows);
+                                egui::CollapsingHeader::new(format!("{} períodos", rows.len()))
+                                    .id_salt((&p.id, "rows"))
+                                    .show(ui, |ui| {
+                                        egui::Grid::new((&p.id, "grid"))
+                                            .num_columns(2)
+                                            .striped(true)
+                                            .show(ui, |ui| {
+                                                for r in rows.iter().rev() {
+                                                    ui.label(period_label(r.start, r.end));
+                                                    ui.label(match r.value {
+                                                        Value::Str(_) => p.value_str(r.value),
+                                                        v => format_number(v),
+                                                    });
+                                                    ui.end_row();
+                                                }
+                                            });
+                                    });
+                            });
+                    }
+                });
+        });
+}
+
+pub fn draw(ctx: &egui::Context, m: &Model, st: &mut UiState) {
     if !m.show {
         return;
     }
+    entity_panel(ctx, m, st);
     egui::Window::new("Bramapa")
         .default_pos([12.0, 12.0])
         .resizable(false)
@@ -182,4 +371,34 @@ pub fn draw(ctx: &egui::Context, m: &Model) {
                 "Arrastar: mover · Roda/+/-: zoom · Setas/WASD: mover · F1: esconder · Esc: sair",
             );
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_numbers_pt_br() {
+        assert_eq!(format_number(Value::I64(1_332_845)), "1.332.845");
+        assert_eq!(format_number(Value::I64(-42)), "-42");
+        assert_eq!(format_number(Value::I64(999)), "999");
+        assert_eq!(format_number(Value::F64(281_707.3)), "281.707,3");
+        assert_eq!(
+            format_number(Value::F64(0.96)),
+            "1,0".replace("1,0", "0,10").replace("0,10", "1,0")
+        );
+    }
+
+    #[test]
+    fn year_range_filter_is_inclusive() {
+        let r = Row {
+            entity_idx: 0,
+            start: ymd_to_days(2022, 1, 1),
+            end: ymd_to_days(2022, 12, 31),
+            value: Value::I64(1),
+        };
+        assert!(row_in_range(&r, 2022, 2022));
+        assert!(row_in_range(&r, 2000, 2022));
+        assert!(!row_in_range(&r, 2023, 2024));
+    }
 }

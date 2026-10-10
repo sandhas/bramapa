@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use bramapa_core::{Level, Tileset};
+use bramapa_core::{DataStore, Level, Tileset};
 use bramapa_render::{AtlasTexture, Camera, Highlight, PlaceholderAtlas, TilemapRenderer};
 use glam::Vec2;
 use winit::application::ApplicationHandler;
@@ -23,6 +23,7 @@ pub use gpu::Gpu;
 pub struct Options {
     pub level_dir: Option<PathBuf>,
     pub tileset_dir: Option<PathBuf>,
+    pub data_dir: Option<PathBuf>,
     pub synthetic_size: (u32, u32),
     /// Initial camera centre in cell coordinates (default: grid centre).
     pub center: Option<(f32, f32)>,
@@ -43,6 +44,7 @@ impl Default for Options {
         Self {
             level_dir: None,
             tileset_dir: None,
+            data_dir: None,
             synthetic_size: (512, 512),
             center: None,
             zoom: 1.0,
@@ -64,6 +66,7 @@ struct Content {
     placeholder: Option<(u32, u32, Vec<u8>)>,
     level_source: String,
     tileset_source: String,
+    data: Option<DataStore>,
 }
 
 fn load_content(opts: &Options) -> Result<Content> {
@@ -105,12 +108,27 @@ fn load_content(opts: &Options) -> Result<Content> {
         tileset.tileset.version,
         tileset.tiles.len()
     );
+    let data = match &opts.data_dir {
+        Some(dir) => {
+            let store =
+                DataStore::load(dir).with_context(|| format!("loading data {}", dir.display()))?;
+            log::info!(
+                "data: {} addons, {} properties, {} rows",
+                store.addons.len(),
+                store.properties.len(),
+                store.properties.iter().map(|p| p.rows.len()).sum::<usize>()
+            );
+            Some(store)
+        }
+        None => None,
+    };
     Ok(Content {
         level,
         tileset,
         placeholder,
         level_source,
         tileset_source,
+        data,
     })
 }
 
@@ -159,6 +177,7 @@ pub struct App {
     frame: u32,
     fps: ui::FpsCounter,
     show_ui: bool,
+    ui_state: ui::UiState,
 }
 
 impl App {
@@ -172,6 +191,7 @@ impl App {
         camera.center = bramapa_render::iso::IsoGeometry::DEFAULT.cell_center(cx, cy);
         camera.set_zoom(opts.zoom);
         let show_ui = opts.show_ui;
+        let ui_state = ui::UiState::new(content.data.as_ref());
         let input = Input {
             selected_entity: opts.select,
             ..Default::default()
@@ -187,6 +207,7 @@ impl App {
             frame: 0,
             fps: ui::FpsCounter::default(),
             show_ui,
+            ui_state,
         })
     }
 
@@ -357,10 +378,12 @@ impl App {
                 .entity(self.input.selected_entity),
             adapter: &scene.gpu.adapter_info,
             show: self.show_ui,
+            data: self.content.data.as_ref(),
         };
+        let ui_state = &mut self.ui_state;
         let mut full_output = scene
             .egui_ctx
-            .run_ui(raw_input, |ui| ui::draw(ui.ctx(), &ui_model));
+            .run_ui(raw_input, |ui| ui::draw(ui.ctx(), &ui_model, ui_state));
         scene
             .egui_state
             .handle_platform_output(&scene.window, full_output.platform_output);

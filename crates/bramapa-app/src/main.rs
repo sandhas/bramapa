@@ -9,6 +9,7 @@ bramapa [opções]
 
   --level <dir>       diretório de nível (level.toml + chunks/*.bmc); padrão: nível sintético
   --tileset <dir>     diretório de tileset (tiles.toml + atlas.png); padrão: atlas placeholder embutido
+  --data <dir>        diretório de build de dados (index.toml + *.bmd) para o painel da entidade
   --size <w>x<h>      tamanho do nível sintético em células (padrão 512x512)
   --center <x>,<y>    célula inicial no centro da tela (padrão: centro da grade)
   --zoom <z>          zoom inicial: 1/32 … 1/2, 1 … 6 (padrão 1)
@@ -35,6 +36,12 @@ fn main() -> anyhow::Result<()> {
                     Some(PathBuf::from(args.next().ok_or_else(|| {
                         anyhow::anyhow!("--level precisa de valor")
                     })?))
+            }
+            "--data" => {
+                opts.data_dir = Some(PathBuf::from(
+                    args.next()
+                        .ok_or_else(|| anyhow::anyhow!("--data precisa de valor"))?,
+                ))
             }
             "--tileset" => {
                 opts.tileset_dir =
