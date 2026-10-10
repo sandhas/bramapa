@@ -41,6 +41,18 @@ version = "0.0.1"
 [period]                       # opcional; ausente = mapa sem data
 start = "2023"
 end = "2023"
+
+# Entidades referenciadas pela camada `entity` dos chunks. `index` 0 é reservado (nenhuma).
+# A ordem/numeração é livre, mas estável dentro do nível.
+[[entities]]
+index = 1
+id = "estado:43"
+name = "Rio Grande do Sul"
+
+[[entities]]
+index = 2
+id = "pais:UY"
+name = "Uruguai"
 ```
 
 Chunks fora de `[0, width/chunk_size) × [0, height/chunk_size)` são inválidos. Chunks ausentes
@@ -56,9 +68,9 @@ Um arquivo por chunk. Cabeçalho não comprimido, carga comprimida com zstd.
 |---|---|---|---|
 | 0 | `[u8; 4]` | magic | `"BMCK"` |
 | 4 | `u16` | spec_version | `0` |
-| 6 | `u16` | flags | bit 0: tem camada `objects` |
+| 6 | `u16` | flags | bit 0: tem camada `objects`; bit 1: tem camada `entity` |
 | 8 | `u16` | chunk_size | `64` |
-| 10 | `u8` | layer_count | `2` ou `3` |
+| 10 | `u8` | layer_count | `2` + (1 se `entity`) + (1 se `objects`) |
 | 11 | `u8` | reserved | `0` |
 | 12 | `i32` | cx | coordenada do chunk na grade |
 | 16 | `i32` | cy | |
@@ -74,7 +86,10 @@ Camadas em ordem fixa:
    Id de tile no tileset. `0` = vazio.
 2. **`overlay`**: `chunk_size²` valores `u16`. Desenhado sobre o terreno (estradas, rios, bordas).
    `0` = vazio.
-3. **`objects`** (só se `flags & 1`): `u32 count`, depois `count` registros de 8 bytes:
+3. **`entity`** (só se `flags & 2`): `chunk_size²` valores `u16`, índice em `[[entities]]` do
+   `level.toml`. `0` = nenhuma entidade (oceano, fora do escopo). É o que permite hover/clique:
+   o motor nunca faz teste de ponto em polígono, só lê este índice.
+4. **`objects`** (só se `flags & 1`): `u32 count`, depois `count` registros de 8 bytes:
 
    | Tipo | Campo |
    |---|---|
@@ -103,9 +118,11 @@ Camadas em ordem fixa:
   de chunk recebe uma cópia (em dias) e existe para chunks fatiados no tempo no futuro. Ou os dois
   campos do cabeçalho são válidos, ou os dois são `i32::MIN`; "só início" é inválido. Divergência
   entre chunk e nível é aviso, não erro.
-- **`layer_count` × `flags`**: `layer_count` é redundante com `flags & 1` e um leitor rejeita
-  inconsistência. Um chunk sem objetos é escrito com `flags = 0`, `layer_count = 2` (codificação
-  canônica; codificadores devem produzir bytes idênticos para o mesmo chunk).
+- **`layer_count` × `flags`**: `layer_count` é redundante com os bits de `flags` e um leitor
+  rejeita inconsistência. Camadas ausentes não são escritas: um chunk sem objetos e sem entidade
+  tem `flags = 0`, `layer_count = 2` (codificação canônica; codificadores devem produzir bytes
+  idênticos para o mesmo chunk). Ordem fixa das camadas na carga: `terrain`, `overlay`,
+  `entity` (se houver), `objects` (se houver).
 - **Teto de `chunk_size`**: como `cell_x`/`cell_y` dos objetos são `u8`, `chunk_size` nunca
   passará de 256. Na v0 é sempre 64.
 - **Tamanho do arquivo**: exatamente `32 + payload_len` bytes; bytes extras são erro.
