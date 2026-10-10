@@ -172,8 +172,10 @@ impl App {
         camera.center = bramapa_render::iso::IsoGeometry::DEFAULT.cell_center(cx, cy);
         camera.zoom = opts.zoom.clamp(camera.min_zoom, camera.max_zoom);
         let show_ui = opts.show_ui;
-        let mut input = Input::default();
-        input.selected_entity = opts.select;
+        let input = Input {
+            selected_entity: opts.select,
+            ..Default::default()
+        };
         Ok(Self {
             opts,
             content,
