@@ -9,7 +9,7 @@ motor nativo + modelo de dados extensível por addons declarativos da comunidade
 
 ![Fase 2: nível 1 real, Brasil e vizinhos a 1/32](screenshots/fase2-brasil.png)
 
-![Fase 2: Rio Grande do Sul selecionado a 1/8](screenshots/fase2-rs-selecionado.png)
+![Fase 3: painel de dados do Rio Grande do Sul](screenshots/fase3-painel-rs.png)
 
 ## Os quatro repositórios
 
@@ -56,12 +56,19 @@ cargo run --release -- --no-ui --fullscreen --no-vsync   # benchmark
 (cd ../bramapa-pipeline && uv run bramapa-pipeline fetch && \
   uv run bramapa-pipeline build-level1 --out ../bramapa-level1 --tileset ../bramapa-tileset)
 cargo run --release -- --level ../bramapa-level1 --tileset ../bramapa-tileset --zoom 1/32
+
+# dados do ibge-core no painel da entidade: build no repo de dados e abrir com --data
+(cd ../bramapa-data && uv run bramapa-data build --out ../bramapa-data-build)
+cargo run --release -- --level ../bramapa-level1 --tileset ../bramapa-tileset \
+  --data ../bramapa-data-build --zoom 1/8
 cargo test --workspace
 ```
 
 Controles: arrastar com o mouse move, roda/`+`/`-` andam na escada de zoom (1/32 … 1/2 para
 visão geral com mipmaps, 1 … 6 pixel-perfect), clique seleciona a entidade (estado/país) sob o
-cursor, passar o mouse realça. Setas/WASD movem, `F1` esconde o painel, `Esc` sai.
+cursor, passar o mouse realça. Com `--data`, a entidade selecionada abre um painel com cada
+propriedade (último valor, sparkline, tabela por período) e um seletor de intervalo de anos.
+Setas/WASD movem, `F1` esconde o painel, `Esc` sai.
 Toque: arrastar move, toque seleciona.
 
 ## Setup da máquina
@@ -127,7 +134,9 @@ O emulador não mede celular: a primeira medição em aparelho real está penden
 2. **Nível 1** (feita): Brasil + vizinhos gerados de Natural Earth, malhas IBGE e biomas IBGE
    (MapBiomas fica para os níveis 2 e 3), 60 entidades (27 UFs + países), camada de entidade por
    célula, hover e clique em estado, escada de zoom com visão geral.
-3. **Dados**: build binário do `ibge-core`, painel de entidade, seletor de intervalo temporal.
+3. **Dados** (feita): formato `.bmd` nos dois lados, `ibge-core` com séries reais do SIDRA
+   (população 2001–2026, PIB 2002–2023, área 2022, por UF e Brasil), painel da entidade com
+   seletor de intervalo temporal.
 4. **Níveis 2 e 3**: RS e Porto Alegre, transições, override manual de exemplo.
 5. **Comunidade**: addon externo de exemplo, guia de contribuição, benchmark, primeira release.
 
