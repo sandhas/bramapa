@@ -172,8 +172,8 @@ pub fn dilate(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
                         }
                     }
                 }
-                if n > 0 {
-                    out[i] = (acc[0] / n).max(1) as u8; // never exactly black, marks "filled"
+                if let Some(r) = acc[0].checked_div(n) {
+                    out[i] = r.max(1) as u8; // never exactly black, marks "filled"
                     out[i + 1] = (acc[1] / n) as u8;
                     out[i + 2] = (acc[2] / n) as u8;
                     changed = true;
@@ -214,8 +214,8 @@ pub fn mip_chain(rgba: &[u8], width: u32, height: u32) -> Vec<(u32, u32, Vec<u8>
                     n += 1;
                 }
                 let o = ((y * nw + x) * 4) as usize;
-                if acc[3] > 0 {
-                    dst[o] = (acc[0] / acc[3]) as u8;
+                if let Some(r) = acc[0].checked_div(acc[3]) {
+                    dst[o] = r as u8;
                     dst[o + 1] = (acc[1] / acc[3]) as u8;
                     dst[o + 2] = (acc[2] / acc[3]) as u8;
                 }
