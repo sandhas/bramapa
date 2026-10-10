@@ -23,6 +23,7 @@ motor nativo + modelo de dados extensível por addons declarativos da comunidade
 | [bramapa-pipeline](https://github.com/sandhas/bramapa-pipeline) | Geodado (IBGE, MapBiomas, SRTM, OSM) → chunks de tiles. Python, hot paths em Rust depois. |
 | [bramapa-data](https://github.com/sandhas/bramapa-data) | Addons: dados com série temporal por entidade, sem código. Contribuição via PR. |
 | [bramapa-tileset](https://github.com/sandhas/bramapa-tileset) | Arte: atlas de tiles + `tiles.toml`. |
+| [bramapa-addon-energia](https://github.com/sandhas/bramapa-addon-energia) | Addon externo de exemplo (tarifas e capacidade instalada por UF, ANEEL): mostra que um addon vive em qualquer repositório. |
 
 Todos declaram `spec_version = 0`. A v0 é instável até o MVP existir.
 
@@ -46,6 +47,19 @@ crates/bramapa-app      janela, GPU, entrada, overlay egui; desktop (bin) e Andr
 ```
 
 ## Rodar
+
+Sem compilar nada: a [release v0.1.0](https://github.com/sandhas/bramapa/releases/tag/v0.1.0)
+traz o binário Linux, o APK Android (assinado com chave de desenvolvimento) e bundles com os três
+níveis gerados, o tileset e o build de dados:
+
+```sh
+tar xzf bramapa-v0.1.0-linux-x86_64.tar.gz
+tar xzf bramapa-v0.1.0-niveis-e-tileset.tar.gz
+tar xzf bramapa-v0.1.0-dados.tar.gz
+./bramapa --levels bramapa-levels --tileset bramapa-tileset --data bramapa-data-build --zoom 1/32
+```
+
+A partir do código:
 
 ```sh
 cargo run --release                       # nível sintético 512x512, atlas placeholder embutido
