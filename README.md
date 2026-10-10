@@ -9,6 +9,10 @@ motor nativo + modelo de dados extensível por addons declarativos da comunidade
 
 ![Fase 2: nível 1 real, Brasil e vizinhos a 1/32](screenshots/fase2-brasil.png)
 
+![Fase 4: Porto Alegre, nível 3 a 30 m](screenshots/fase4-poa.png)
+
+![Fase 4: override manual no centro de Porto Alegre](screenshots/fase4-override-praca.png)
+
 ![Fase 3: painel de dados do Rio Grande do Sul](screenshots/fase3-painel-rs.png)
 
 ## Os quatro repositórios
@@ -57,6 +61,14 @@ cargo run --release -- --no-ui --fullscreen --no-vsync   # benchmark
   uv run bramapa-pipeline build-level1 --out ../bramapa-level1 --tileset ../bramapa-tileset)
 cargo run --release -- --level ../bramapa-level1 --tileset ../bramapa-tileset --zoom 1/32
 
+# os três níveis numa raiz (navegação país → estado → município)
+(cd ../bramapa-pipeline && uv run bramapa-pipeline fetch && \
+  uv run bramapa-pipeline build-level1 --root ../bramapa-levels --tileset ../bramapa-tileset && \
+  uv run bramapa-pipeline build-level2 --uf 43 --root ../bramapa-levels --tileset ../bramapa-tileset && \
+  uv run bramapa-pipeline build-level3 --municipio 4314902 --root ../bramapa-levels --tileset ../bramapa-tileset)
+cargo run --release -- --levels ../bramapa-levels --tileset ../bramapa-tileset \
+  --data ../bramapa-data-build --zoom 1/32
+
 # dados do ibge-core no painel da entidade: build no repo de dados e abrir com --data
 (cd ../bramapa-data && uv run bramapa-data build --out ../bramapa-data-build)
 cargo run --release -- --level ../bramapa-level1 --tileset ../bramapa-tileset \
@@ -68,6 +80,9 @@ Controles: arrastar com o mouse move, roda/`+`/`-` andam na escada de zoom (1/32
 visão geral com mipmaps, 1 … 6 pixel-perfect), clique seleciona a entidade (estado/país) sob o
 cursor, passar o mouse realça. Com `--data`, a entidade selecionada abre um painel com cada
 propriedade (último valor, sparkline, tabela por período) e um seletor de intervalo de anos.
+Com `--levels`, duplo clique, `Enter` ou o botão "Entrar" descem para o nível da entidade
+(estado → município) quando ele foi gerado; `Backspace` ou "◀" voltam; o breadcrumb mostra o
+caminho. Overrides manuais de mapa vêm do build de dados e são aplicados ao carregar o nível.
 Setas/WASD movem, `F1` esconde o painel, `Esc` sai.
 Toque: arrastar move, toque seleciona.
 
@@ -121,6 +136,8 @@ Medido na Fase 0/1 (512×512 células = 266 mil instâncias, 1 draw call por chu
 | Desktop GTX 1070, debug, vsync off | 12 ms | 4,2 ms (240 fps, teto do compositor) | — |
 | Emulador Android x86_64 (GPU do host), release | 39 ms | 1,5 ms (sem vsync) | 38 MB PSS |
 | Desktop GTX 1070, nível 1 real (256 chunks, 1,07 M instâncias), zoom 1/32, debug | 60 ms | 4,2 ms (240 fps, 416 draw calls) | — |
+| Desktop GTX 1070, nível 2 RS (256 chunks, 1,13 M instâncias), zoom 1/32, debug | 290 ms (leitura + upload) | 4,2 ms (240 fps, 654 draw calls) | — |
+| Desktop GTX 1070, nível 3 Porto Alegre (529 chunks, 2,59 M instâncias), zoom 1/16, debug | 142 ms (upload) | 4,2 ms (240 fps, 465 draw calls) | — |
 
 O emulador não mede celular: a primeira medição em aparelho real está pendente.
 

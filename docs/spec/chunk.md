@@ -141,5 +141,13 @@ Camadas em ordem fixa:
   na projeção de tela.
 - **Células `0` dentro de um chunk**: o produtor deve pintar cobertura em toda célula do nível
   (oceano incluído); `0` significa "nada a desenhar", e o motor mostra a cor de fundo.
+- **Entidade do próprio nível**: dentro do nível de uma entidade, as células dela podem apontar
+  para a própria entidade (ex.: `municipio:4314902` no nível 3) ou para subentidades; células
+  de vizinhos fora do escopo podem receber a entidade do vizinho ou `0`. As "pseudo-municípios"
+  do IBGE (lagoas, códigos `UU00001`/`UU00002`) recebem a entidade do estado.
+- **Overrides manuais**: o build de dados lista `[[map_overrides]]` no `index.toml` e copia os
+  chunks; o motor aplica ao carregar o nível, maior `priority` vence, empate = primeiro listado.
+  O chunk de override deve carregar a camada `entity` do chunk original para hover/clique
+  continuarem corretos.
 - **Layout de diretório**: um leitor aceita qualquer diretório que contenha `level.toml` e
   `chunks/`; o caminho `<nivel>/<entity-id>/` é convenção de publicação, não exigência.
