@@ -271,7 +271,7 @@ fn fit_zoom(level: &Level, viewport: Vec2) -> f32 {
         .iter()
         .copied()
         .filter(|z| *z <= need)
-        .last()
+        .next_back()
         .unwrap_or(bramapa_render::ZOOM_STEPS[0])
 }
 
