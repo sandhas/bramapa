@@ -27,7 +27,7 @@ pub struct Options {
     /// Initial camera centre in cell coordinates (default: grid centre).
     pub center: Option<(f32, f32)>,
     /// Initial integer zoom.
-    pub zoom: u32,
+    pub zoom: f32,
     pub exit_after_frames: Option<u32>,
     /// Vsync on (default). Off only for benchmarking.
     pub vsync: bool,
@@ -45,7 +45,7 @@ impl Default for Options {
             tileset_dir: None,
             synthetic_size: (512, 512),
             center: None,
-            zoom: 1,
+            zoom: 1.0,
             exit_after_frames: None,
             vsync: true,
             show_ui: true,
@@ -170,7 +170,7 @@ impl App {
             .center
             .unwrap_or((g.width as f32 * 0.5, g.height as f32 * 0.5));
         camera.center = bramapa_render::iso::IsoGeometry::DEFAULT.cell_center(cx, cy);
-        camera.zoom = opts.zoom.clamp(camera.min_zoom, camera.max_zoom);
+        camera.set_zoom(opts.zoom);
         let show_ui = opts.show_ui;
         let input = Input {
             selected_entity: opts.select,
@@ -440,14 +440,14 @@ impl App {
         if self.frame % 300 == 0 {
             // Periodic line for logcat / terminal benchmarking (every ~5 s at 60 fps).
             log::info!(
-                "frame {}: {:.1} fps ({:.2} ms), {} chunks, {} draw calls, {} instances, zoom {}x",
+                "frame {}: {:.1} fps ({:.2} ms), {} chunks, {} draw calls, {} instances, zoom {}",
                 self.frame,
                 self.fps.fps(),
                 self.fps.frame_ms(),
                 scene.renderer.stats.chunks_drawn,
                 scene.renderer.stats.draw_calls,
                 scene.renderer.stats.instances_drawn,
-                self.camera.zoom
+                self.camera.zoom_label()
             );
         }
         if is_last {
@@ -477,7 +477,7 @@ impl App {
             d.y += speed;
         }
         if d != Vec2::ZERO {
-            self.camera.pan_world(d / self.camera.zoom as f32 * 2.0);
+            self.camera.pan_world(d / self.camera.zoom * 2.0);
         }
     }
 

@@ -36,7 +36,8 @@ struct Uniforms {
     cell_h: f32,
     hover_entity: u32,
     selected_entity: u32,
-    _pad: [u32; 2],
+    alpha_cut: f32,
+    _pad: u32,
 }
 
 /// Entity indices to emphasise this frame (0 = none).
@@ -92,7 +93,7 @@ impl TilemapRenderer {
             label: Some("tilemap uniforms bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -256,7 +257,9 @@ impl TilemapRenderer {
             cell_h: self.geometry.cell_h,
             hover_entity: highlight.hover as u32,
             selected_entity: highlight.selected as u32,
-            _pad: [0; 2],
+            // Zoomed out, mip blending softens edges; a lower cut avoids cracks between tiles.
+            alpha_cut: if camera.zoom >= 1.0 { 0.5 } else { 0.3 },
+            _pad: 0,
         };
         queue.write_buffer(&self.uniform_buf, 0, bytemuck::bytes_of(&uniforms));
 

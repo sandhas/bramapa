@@ -7,7 +7,7 @@ pub mod iso;
 pub mod tilemap;
 
 pub use atlas::{AtlasTexture, PlaceholderAtlas};
-pub use camera::Camera;
+pub use camera::{Camera, ZOOM_STEPS};
 pub use tilemap::{Highlight, RenderStats, TilemapRenderer};
 
 /// Depth format used by the tilemap pipeline (the app creates the depth texture).

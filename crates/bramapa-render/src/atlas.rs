@@ -52,6 +52,8 @@ impl AtlasTexture {
             (width * height * 4) as usize,
             "rgba size mismatch"
         );
+        let dilated = dilate(rgba, width, height);
+        let mips = mip_chain(&dilated, width, height);
         let size = wgpu::Extent3d {
             width,
             height,
@@ -60,37 +62,44 @@ impl AtlasTexture {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("atlas"),
             size,
-            mip_level_count: 1,
+            mip_level_count: mips.len() as u32,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            rgba,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width * 4),
-                rows_per_image: Some(height),
-            },
-            size,
-        );
+        for (level, (w, h, data)) in mips.iter().enumerate() {
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: level as u32,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(w * 4),
+                    rows_per_image: Some(*h),
+                },
+                wgpu::Extent3d {
+                    width: *w,
+                    height: *h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("atlas sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
+            // Nearest when magnifying (pixel art); trilinear when minifying (overview zoom).
             mag_filter: wgpu::FilterMode::Nearest,
-            min_filter: wgpu::FilterMode::Nearest,
-            mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -129,6 +138,93 @@ impl AtlasTexture {
         let (w, h) = img.dimensions();
         Ok(Self::from_rgba(device, queue, layout, w, h, img.as_raw()))
     }
+}
+
+/// Give every fully transparent texel the colour of its nearest opaque neighbour (alpha stays
+/// 0), so linear/mip filtering never blends towards black at sprite edges.
+pub fn dilate(rgba: &[u8], width: u32, height: u32) -> Vec<u8> {
+    let mut out = rgba.to_vec();
+    let (w, h) = (width as i32, height as i32);
+    // A few passes of 8-neighbour propagation are enough for 64 px cells.
+    for _ in 0..8 {
+        let src = out.clone();
+        let mut changed = false;
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) * 4) as usize;
+                if src[i + 3] != 0 || (src[i] | src[i + 1] | src[i + 2]) != 0 {
+                    continue; // opaque, or already filled in a previous pass
+                }
+                let mut acc = [0u32; 3];
+                let mut n = 0u32;
+                for dy in -1..=1 {
+                    for dx in -1..=1 {
+                        let (nx, ny) = (x + dx, y + dy);
+                        if nx < 0 || ny < 0 || nx >= w || ny >= h {
+                            continue;
+                        }
+                        let j = ((ny * w + nx) * 4) as usize;
+                        if src[j + 3] != 0 || (src[j] | src[j + 1] | src[j + 2]) != 0 {
+                            acc[0] += src[j] as u32;
+                            acc[1] += src[j + 1] as u32;
+                            acc[2] += src[j + 2] as u32;
+                            n += 1;
+                        }
+                    }
+                }
+                if n > 0 {
+                    out[i] = (acc[0] / n).max(1) as u8; // never exactly black, marks "filled"
+                    out[i + 1] = (acc[1] / n) as u8;
+                    out[i + 2] = (acc[2] / n) as u8;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    out
+}
+
+/// Full mip chain down to 1×1 (alpha-weighted box filter, so transparent texels never bleed
+/// their colour into the averages).
+pub fn mip_chain(rgba: &[u8], width: u32, height: u32) -> Vec<(u32, u32, Vec<u8>)> {
+    let mut levels = vec![(width, height, rgba.to_vec())];
+    while let Some((w, h, src)) = levels.last() {
+        if *w == 1 && *h == 1 {
+            break;
+        }
+        let (nw, nh) = ((*w / 2).max(1), (*h / 2).max(1));
+        let (w, h) = (*w, *h);
+        let mut dst = vec![0u8; (nw * nh * 4) as usize];
+        for y in 0..nh {
+            for x in 0..nw {
+                let mut acc = [0u32; 4];
+                let mut n = 0u32;
+                for (sy, sx) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+                    let px = (x * 2 + sx).min(w - 1);
+                    let py = (y * 2 + sy).min(h - 1);
+                    let i = ((py * w + px) * 4) as usize;
+                    let a = src[i + 3] as u32;
+                    acc[0] += src[i] as u32 * a;
+                    acc[1] += src[i + 1] as u32 * a;
+                    acc[2] += src[i + 2] as u32 * a;
+                    acc[3] += a;
+                    n += 1;
+                }
+                let o = ((y * nw + x) * 4) as usize;
+                if acc[3] > 0 {
+                    dst[o] = (acc[0] / acc[3]) as u8;
+                    dst[o + 1] = (acc[1] / acc[3]) as u8;
+                    dst[o + 2] = (acc[2] / acc[3]) as u8;
+                }
+                dst[o + 3] = (acc[3] / n) as u8;
+            }
+        }
+        levels.push((nw, nh, dst));
+    }
+    levels
 }
 
 /// Procedurally drawn placeholder atlas matching the shared placeholder tile id convention.
@@ -406,6 +502,42 @@ fn draw_cell(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dilate_fills_transparent_corners_with_edge_colour() {
+        let p = PlaceholderAtlas::generate();
+        let d = dilate(&p.rgba, p.width, p.height);
+        let t = p.tileset.get(1).unwrap();
+        // a texel just outside the campo diamond: transparent, but now green-ish
+        let (x, y) = (t.col as u32 * CELL + 2, t.row as u32 * CELL + 40);
+        let i = ((y * p.width + x) * 4) as usize;
+        assert_eq!(p.rgba[i + 3], 0);
+        assert_eq!(d[i + 3], 0);
+        assert!(d[i + 1] > 100, "{:?}", &d[i..i + 4]);
+    }
+
+    #[test]
+    fn mip_chain_reaches_one_pixel_and_keeps_colour() {
+        let p = PlaceholderAtlas::generate();
+        let mips = mip_chain(&p.rgba, p.width, p.height);
+        assert_eq!(mips.last().unwrap().0, 1);
+        assert_eq!(mips.last().unwrap().1, 1);
+        assert_eq!(mips.len() as u32, 1 + p.width.max(p.height).ilog2());
+        // level 1 of tile 1 (campo) is still green-ish, not darkened by transparent neighbours
+        let (w1, _, d1) = &mips[1];
+        let t = p.tileset.get(1).unwrap();
+        let (x, y) = (
+            (t.col as u32 * CELL + 32) / 2,
+            (t.row as u32 * CELL + 48) / 2,
+        );
+        let i = ((y * w1 + x) * 4) as usize;
+        assert!(
+            d1[i + 1] > d1[i] && d1[i + 1] > d1[i + 2],
+            "{:?}",
+            &d1[i..i + 4]
+        );
+        assert!(d1[i + 3] > 200);
+    }
 
     #[test]
     fn placeholder_is_consistent() {

@@ -11,7 +11,7 @@ bramapa [opções]
   --tileset <dir>     diretório de tileset (tiles.toml + atlas.png); padrão: atlas placeholder embutido
   --size <w>x<h>      tamanho do nível sintético em células (padrão 512x512)
   --center <x>,<y>    célula inicial no centro da tela (padrão: centro da grade)
-  --zoom <n>          zoom inicial inteiro, 1 a 6 (padrão 1)
+  --zoom <z>          zoom inicial: 1/32 … 1/2, 1 … 6 (padrão 1)
   --frames <n>        encerra após n quadros (para testes)
   --no-vsync          desliga o vsync (medição de performance)
   --no-ui             inicia com o painel escondido (F1 mostra)
@@ -61,10 +61,13 @@ fn main() -> anyhow::Result<()> {
                 opts.center = Some((x.trim().parse()?, y.trim().parse()?));
             }
             "--zoom" => {
-                opts.zoom = args
+                let v = args
                     .next()
-                    .ok_or_else(|| anyhow::anyhow!("--zoom precisa de valor"))?
-                    .parse()?
+                    .ok_or_else(|| anyhow::anyhow!("--zoom precisa de valor"))?;
+                opts.zoom = match v.split_once('/') {
+                    Some((n, d)) => n.trim().parse::<f32>()? / d.trim().parse::<f32>()?,
+                    None => v.parse()?,
+                };
             }
             "--no-vsync" => opts.vsync = false,
             "--no-ui" => opts.show_ui = false,

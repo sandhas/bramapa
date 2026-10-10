@@ -136,5 +136,10 @@ Camadas em ordem fixa:
 - **Eixos da grade**: com `rotation_deg = 45`, o eixo `x` da grade aponta para sudeste e o `y`
   para sudoeste no terreno, de modo que o norte geográfico fica para cima na tela. Em outras
   palavras, `rotation_deg` é o ângulo horário entre o norte e o eixo `−y` da grade.
+- **Origem da grade**: `origin_x`/`origin_y` são as coordenadas projetadas do **vértice norte**
+  da célula `(0, 0)` (convenção de canto de pixel do GDAL), que coincide com o topo do losango
+  na projeção de tela.
+- **Células `0` dentro de um chunk**: o produtor deve pintar cobertura em toda célula do nível
+  (oceano incluído); `0` significa "nada a desenhar", e o motor mostra a cor de fundo.
 - **Layout de diretório**: um leitor aceita qualquer diretório que contenha `level.toml` e
   `chunks/`; o caminho `<nivel>/<entity-id>/` é convenção de publicação, não exigência.

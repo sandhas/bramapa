@@ -130,8 +130,10 @@ pub fn draw(ctx: &egui::Context, m: &Model) {
                     }
                     ui.label("Câmera");
                     ui.label(format!(
-                        "({:.0}, {:.0}) · zoom {}x",
-                        m.camera.center.x, m.camera.center.y, m.camera.zoom
+                        "({:.0}, {:.0}) · zoom {}",
+                        m.camera.center.x,
+                        m.camera.center.y,
+                        m.camera.zoom_label()
                     ));
                     ui.end_row();
                     ui.label("Célula");

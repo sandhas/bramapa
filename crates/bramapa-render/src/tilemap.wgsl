@@ -12,8 +12,8 @@ struct Uniforms {
     cell_h: f32,
     hover_entity: u32,
     selected_entity: u32,
+    alpha_cut: f32,
     _pad0: u32,
-    _pad1: u32,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -31,15 +31,28 @@ struct VsOut {
     @builtin(position) pos: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) emphasis: u32, // 0 none, 1 hover, 2 selected
+    @location(2) @interpolate(flat) layer: u32,
 };
 
 @vertex
 fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
-    var corners = array<vec2<f32>, 6>(
+    // Objects use the full cell quad; terrain and overlay use the exact diamond at the bottom
+    // of the cell, so neighbouring cells never overlap and there are no transparent corners.
+    var quad = array<vec2<f32>, 6>(
         vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0),
         vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), vec2<f32>(1.0, 1.0),
     );
-    let c = corners[vi];
+    let dy0 = 1.0 - u.tile_h / u.cell_h;        // top of the diamond in quad space
+    let dym = 1.0 - u.tile_h * 0.5 / u.cell_h;  // middle row of the diamond
+    var diamond = array<vec2<f32>, 6>(
+        vec2<f32>(0.5, dy0), vec2<f32>(1.0, dym), vec2<f32>(0.0, dym),
+        vec2<f32>(0.0, dym), vec2<f32>(1.0, dym), vec2<f32>(0.5, 1.0),
+    );
+    let layer = inst.misc.x >> 8u;
+    var c = quad[vi];
+    if (layer < 2u) {
+        c = diamond[vi];
+    }
     let x = f32(inst.cell.x);
     let y = f32(inst.cell.y);
     let top = vec2<f32>((x - y) * u.tile_w * 0.5, (x + y) * u.tile_h * 0.5);
@@ -47,7 +60,6 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
     let world = tl + c * vec2<f32>(u.cell_w, u.cell_h);
     var clip = u.view_proj * vec4<f32>(world, 0.0, 1.0);
 
-    let layer = inst.misc.x >> 8u;
     var z = 0.999;
     if (layer == 1u) {
         z = 0.998;
@@ -80,13 +92,15 @@ fn vs_main(@builtin(vertex_index) vi: u32, inst: Instance) -> VsOut {
     out.pos = clip;
     out.uv = uv;
     out.emphasis = emphasis;
+    out.layer = layer;
     return out;
 }
 
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let color = textureSample(atlas_tex, atlas_smp, in.uv);
-    if (color.a < 0.5) {
+    // Terrain diamonds are fully covered (atlas is dilated), so only overlays/objects cut.
+    if (in.layer != 0u && color.a < u.alpha_cut) {
         discard;
     }
     var rgb = color.rgb;
