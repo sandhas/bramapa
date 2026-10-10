@@ -8,6 +8,7 @@ const USAGE: &str = "\
 bramapa [opções]
 
   --level <dir>       diretório de nível (level.toml + chunks/*.bmc); padrão: nível sintético
+  --levels <root>     raiz com <nível>/<entidade>/ (navegação: duplo clique/Enter entra, Backspace volta)
   --tileset <dir>     diretório de tileset (tiles.toml + atlas.png); padrão: atlas placeholder embutido
   --data <dir>        diretório de build de dados (index.toml + *.bmd) para o painel da entidade
   --size <w>x<h>      tamanho do nível sintético em células (padrão 512x512)
@@ -17,6 +18,7 @@ bramapa [opções]
   --no-vsync          desliga o vsync (medição de performance)
   --no-ui             inicia com o painel escondido (F1 mostra)
   --select <n>        inicia com a entidade de índice n selecionada (para testes)
+  --enter             entra no nível da entidade selecionada logo após o primeiro quadro (testes)
   --fullscreen        janela em tela cheia sem borda
   --screenshot <png>  salva o último quadro em PNG (com --frames)
   -h, --help
@@ -35,6 +37,12 @@ fn main() -> anyhow::Result<()> {
                 opts.level_dir =
                     Some(PathBuf::from(args.next().ok_or_else(|| {
                         anyhow::anyhow!("--level precisa de valor")
+                    })?))
+            }
+            "--levels" => {
+                opts.levels_root =
+                    Some(PathBuf::from(args.next().ok_or_else(|| {
+                        anyhow::anyhow!("--levels precisa de valor")
                     })?))
             }
             "--data" => {
@@ -78,6 +86,7 @@ fn main() -> anyhow::Result<()> {
             }
             "--no-vsync" => opts.vsync = false,
             "--no-ui" => opts.show_ui = false,
+            "--enter" => opts.enter_on_start = true,
             "--select" => {
                 opts.select = args
                     .next()

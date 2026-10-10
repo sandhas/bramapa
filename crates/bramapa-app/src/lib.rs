@@ -3,12 +3,12 @@
 mod gpu;
 mod ui;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
-use bramapa_core::{DataStore, Level, Tileset};
+use bramapa_core::{level_dir, DataStore, Level, Tileset};
 use bramapa_render::{AtlasTexture, Camera, Highlight, PlaceholderAtlas, TilemapRenderer};
 use glam::Vec2;
 use winit::application::ApplicationHandler;
@@ -22,6 +22,8 @@ pub use gpu::Gpu;
 #[derive(Clone, Debug)]
 pub struct Options {
     pub level_dir: Option<PathBuf>,
+    /// Root with `<level>/<entity>/` directories (enables navigation between levels).
+    pub levels_root: Option<PathBuf>,
     pub tileset_dir: Option<PathBuf>,
     pub data_dir: Option<PathBuf>,
     pub synthetic_size: (u32, u32),
@@ -36,6 +38,8 @@ pub struct Options {
     pub fullscreen: bool,
     /// Entity index selected at start (0 = none).
     pub select: u16,
+    /// Enter the selected entity's level after the first frame (tests/screenshots).
+    pub enter_on_start: bool,
     pub screenshot: Option<PathBuf>,
 }
 
@@ -43,6 +47,7 @@ impl Default for Options {
     fn default() -> Self {
         Self {
             level_dir: None,
+            levels_root: None,
             tileset_dir: None,
             data_dir: None,
             synthetic_size: (512, 512),
@@ -53,14 +58,26 @@ impl Default for Options {
             show_ui: true,
             fullscreen: false,
             select: 0,
+            enter_on_start: false,
             screenshot: None,
         }
     }
 }
 
 /// Everything loaded from disk (or generated) before the window exists.
+/// One entry of the navigation stack (level 1 → 2 → 3).
+#[derive(Clone, Debug)]
+pub struct Crumb {
+    pub level: u8,
+    pub entity: String,
+    pub name: String,
+}
+
 struct Content {
     level: Level,
+    levels_root: Option<PathBuf>,
+    /// Path from the root level to the current one; last = current.
+    stack: Vec<Crumb>,
     tileset: Tileset,
     /// RGBA atlas pixels when using the embedded placeholder (None = load from tileset dir).
     placeholder: Option<(u32, u32, Vec<u8>)>,
@@ -69,13 +86,62 @@ struct Content {
     data: Option<DataStore>,
 }
 
+/// Replace procedural chunks with the manual overrides an addon ships for this level.
+fn apply_overrides(level: &mut Level, data: &DataStore) {
+    let mut priorities = std::collections::HashMap::new();
+    let mut sorted: Vec<_> = data
+        .map_overrides
+        .iter()
+        .filter(|o| {
+            o.level == level.manifest.level.level && o.entity == level.manifest.level.entity
+        })
+        .collect();
+    sorted.sort_by_key(|o| std::cmp::Reverse(o.priority));
+    for o in sorted {
+        let dir = data.dir.join(&o.path);
+        match level.apply_override(&dir, &o.chunks, o.priority, &mut priorities) {
+            Ok(n) => log::info!(
+                "override '{}' applied to {n} chunk(s) (priority {})",
+                o.addon,
+                o.priority
+            ),
+            Err(e) => log::warn!("override '{}' skipped: {e:#}", o.addon),
+        }
+    }
+}
+
+/// Find the root level directory: `1/pais_BR` or the first directory under `1/`.
+fn root_level_dir(root: &Path) -> Result<PathBuf> {
+    let preferred = level_dir(root, 1, "pais:BR");
+    if preferred.join("level.toml").is_file() {
+        return Ok(preferred);
+    }
+    let one = root.join("1");
+    let mut dirs: Vec<PathBuf> = std::fs::read_dir(&one)
+        .with_context(|| format!("reading {}", one.display()))?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.join("level.toml").is_file())
+        .collect();
+    dirs.sort();
+    dirs.into_iter()
+        .next()
+        .with_context(|| format!("no level under {}", one.display()))
+}
+
 fn load_content(opts: &Options) -> Result<Content> {
-    let (level, level_source) = match &opts.level_dir {
-        Some(dir) => (
+    let (level, level_source) = match (&opts.level_dir, &opts.levels_root) {
+        (Some(dir), _) => (
             Level::load(dir).with_context(|| format!("loading level {}", dir.display()))?,
             dir.display().to_string(),
         ),
-        None => {
+        (None, Some(root)) => {
+            let dir = root_level_dir(root)?;
+            (
+                Level::load(&dir).with_context(|| format!("loading level {}", dir.display()))?,
+                dir.display().to_string(),
+            )
+        }
+        (None, None) => {
             let (w, h) = opts.synthetic_size;
             (
                 bramapa_core::synthetic::level(w, h, 42),
@@ -122,8 +188,19 @@ fn load_content(opts: &Options) -> Result<Content> {
         }
         None => None,
     };
+    let mut level = level;
+    if let Some(d) = &data {
+        apply_overrides(&mut level, d);
+    }
+    let stack = vec![Crumb {
+        level: level.manifest.level.level,
+        entity: level.manifest.level.entity.clone(),
+        name: level.manifest.level.name.clone(),
+    }];
     Ok(Content {
         level,
+        levels_root: opts.levels_root.clone(),
+        stack,
         tileset,
         placeholder,
         level_source,
@@ -178,9 +255,112 @@ pub struct App {
     fps: ui::FpsCounter,
     show_ui: bool,
     ui_state: ui::UiState,
+    /// When a level transition started (drives the fade-in).
+    fade_start: Option<Instant>,
+    last_click: Option<(Instant, u16)>,
+}
+
+/// Largest zoom step that shows the whole grid in the viewport.
+fn fit_zoom(level: &Level, viewport: Vec2) -> f32 {
+    let g = &level.manifest.grid;
+    let geo = bramapa_render::iso::IsoGeometry::DEFAULT;
+    let (min, max) = geo.cells_bounds(0.0, 0.0, g.width as f32 - 1.0, g.height as f32 - 1.0);
+    let size = max - min;
+    let need = (viewport.x / size.x).min(viewport.y / size.y);
+    bramapa_render::ZOOM_STEPS
+        .iter()
+        .copied()
+        .filter(|z| *z <= need)
+        .last()
+        .unwrap_or(bramapa_render::ZOOM_STEPS[0])
 }
 
 impl App {
+    /// Directory of the child level for an entity, if it was generated.
+    fn child_level_dir(&self, entity_id: &str) -> Option<PathBuf> {
+        let root = self.content.levels_root.as_ref()?;
+        let next = self.content.level.manifest.level.level + 1;
+        let dir = level_dir(root, next, entity_id);
+        dir.join("level.toml").is_file().then_some(dir)
+    }
+
+    /// Load a level directory, upload it and reset the camera/selection.
+    fn switch_level(&mut self, dir: &Path, push: Option<Crumb>) -> Result<()> {
+        let t = Instant::now();
+        let mut level =
+            Level::load(dir).with_context(|| format!("loading level {}", dir.display()))?;
+        if let Some(d) = &self.content.data {
+            apply_overrides(&mut level, d);
+        }
+        if let Some(scene) = self.scene.as_mut() {
+            scene.renderer.upload_level(
+                &scene.gpu.device,
+                &level,
+                &self.content.tileset,
+                &scene.atlas,
+            );
+            log::info!(
+                "level '{}': {} chunks, {} instances loaded+uploaded in {:.1} ms",
+                level.manifest.level.name,
+                scene.renderer.stats.chunks_total,
+                scene.renderer.stats.instances_total,
+                t.elapsed().as_secs_f32() * 1000.0
+            );
+        }
+        match push {
+            Some(crumb) => self.content.stack.push(crumb),
+            None => {
+                self.content.stack.pop();
+            }
+        }
+        self.content.level_source = dir.display().to_string();
+        self.content.level = level;
+        let g = &self.content.level.manifest.grid;
+        self.camera.center = bramapa_render::iso::IsoGeometry::DEFAULT
+            .cell_center(g.width as f32 * 0.5, g.height as f32 * 0.5);
+        self.camera.zoom = fit_zoom(&self.content.level, self.camera.viewport);
+        self.input.hover_entity = 0;
+        self.input.selected_entity = 0;
+        self.fade_start = Some(Instant::now());
+        Ok(())
+    }
+
+    /// Enter the child level of an entity index (no-op if it does not exist).
+    fn enter_entity(&mut self, entity_index: u16) {
+        let Some(def) = self.content.level.manifest.entity(entity_index).cloned() else {
+            return;
+        };
+        let Some(dir) = self.child_level_dir(&def.id) else {
+            log::info!("no generated level for {}", def.id);
+            return;
+        };
+        let next = self.content.level.manifest.level.level + 1;
+        if let Err(e) = self.switch_level(
+            &dir,
+            Some(Crumb {
+                level: next,
+                entity: def.id,
+                name: def.name,
+            }),
+        ) {
+            log::error!("entering level failed: {e:#}");
+        }
+    }
+
+    fn go_back(&mut self) {
+        if self.content.stack.len() < 2 {
+            return;
+        }
+        let Some(root) = self.content.levels_root.clone() else {
+            return;
+        };
+        let parent = &self.content.stack[self.content.stack.len() - 2];
+        let dir = level_dir(&root, parent.level, &parent.entity);
+        if let Err(e) = self.switch_level(&dir, None) {
+            log::error!("going back failed: {e:#}");
+        }
+    }
+
     fn new(opts: Options) -> Result<Self> {
         let content = load_content(&opts)?;
         let mut camera = Camera::new(Vec2::new(1280.0, 720.0));
@@ -208,6 +388,8 @@ impl App {
             fps: ui::FpsCounter::default(),
             show_ui,
             ui_state,
+            fade_start: None,
+            last_click: None,
         })
     }
 
@@ -292,6 +474,13 @@ impl App {
         self.apply_keys(dt);
 
         let cursor_cell = self.cursor_cell();
+        let can_enter = self
+            .content
+            .level
+            .manifest
+            .entity(self.input.selected_entity)
+            .filter(|e| self.child_level_dir(&e.id).is_some())
+            .map(|e| e.name.clone());
         let Some(scene) = self.scene.as_mut() else {
             return;
         };
@@ -379,6 +568,12 @@ impl App {
             adapter: &scene.gpu.adapter_info,
             show: self.show_ui,
             data: self.content.data.as_ref(),
+            stack: &self.content.stack,
+            can_enter,
+            fade: self
+                .fade_start
+                .map(|t| 1.0 - (t.elapsed().as_secs_f32() / 0.35).min(1.0))
+                .filter(|a| *a > 0.0),
         };
         let ui_state = &mut self.ui_state;
         let mut full_output = scene
@@ -387,6 +582,7 @@ impl App {
         scene
             .egui_state
             .handle_platform_output(&scene.window, full_output.platform_output);
+        let action = self.ui_state.action.take();
         let primitives = scene
             .egui_ctx
             .tessellate(full_output.shapes, full_output.pixels_per_point);
@@ -472,6 +668,19 @@ impl App {
                 scene.renderer.stats.instances_drawn,
                 self.camera.zoom_label()
             );
+        }
+        let action = if self.frame == 1 && self.opts.enter_on_start {
+            Some(ui::UiAction::Enter)
+        } else {
+            action
+        };
+        match action {
+            Some(ui::UiAction::Enter) => {
+                let sel = self.input.selected_entity;
+                self.enter_entity(sel);
+            }
+            Some(ui::UiAction::Back) => self.go_back(),
+            None => {}
         }
         if is_last {
             log::info!(
@@ -610,6 +819,13 @@ impl ApplicationHandler for App {
                         // A click, not a drag: select (or clear) the entity under the cursor.
                         self.update_hover();
                         self.input.selected_entity = self.input.hover_entity;
+                        let now = Instant::now();
+                        let double = matches!(self.last_click, Some((t, e)) if e == self.input.selected_entity && e != 0 && now.duration_since(t).as_millis() < 400);
+                        self.last_click = Some((now, self.input.selected_entity));
+                        if double {
+                            let sel = self.input.selected_entity;
+                            self.enter_entity(sel);
+                        }
                     }
                 }
                 self.input.dragging = pressed;
@@ -670,6 +886,11 @@ impl ApplicationHandler for App {
                         self.camera.zoom_at(-1, self.camera.viewport * 0.5)
                     }
                     PhysicalKey::Code(KeyCode::F1) if pressed => self.show_ui = !self.show_ui,
+                    PhysicalKey::Code(KeyCode::Enter | KeyCode::NumpadEnter) if pressed => {
+                        let sel = self.input.selected_entity;
+                        self.enter_entity(sel);
+                    }
+                    PhysicalKey::Code(KeyCode::Backspace) if pressed => self.go_back(),
                     PhysicalKey::Code(KeyCode::Escape) if pressed => event_loop.exit(),
                     _ => {}
                 }

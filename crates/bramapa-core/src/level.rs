@@ -105,6 +105,17 @@ impl LevelManifest {
     }
 }
 
+/// On-disk directory name of an entity id (`:` is not allowed on every filesystem).
+pub fn entity_dir_name(entity_id: &str) -> String {
+    entity_id.replace(':', "_")
+}
+
+/// `<root>/<level>/<entity-dir>` per `docs/spec/chunk.md`.
+pub fn level_dir(root: &Path, level: u8, entity_id: &str) -> PathBuf {
+    root.join(level.to_string())
+        .join(entity_dir_name(entity_id))
+}
+
 /// A loaded level: manifest plus all chunks found on disk, keyed by `(cx, cy)`.
 #[derive(Clone, Debug)]
 pub struct Level {
@@ -152,6 +163,44 @@ impl Level {
         self.chunks
             .get(&((x / cs) as i32, (y / cs) as i32))
             .map_or(0, |c| c.entity_at((x % cs) as u16, (y % cs) as u16))
+    }
+
+    /// Replace chunks with manual override chunks read from `dir/<cx>_<cy>.bmc`.
+    /// `priorities` remembers the winning priority per chunk across several overrides.
+    pub fn apply_override(
+        &mut self,
+        dir: &Path,
+        chunks: &[[i32; 2]],
+        priority: i32,
+        priorities: &mut HashMap<(i32, i32), i32>,
+    ) -> Result<usize> {
+        let mut applied = 0;
+        for &[cx, cy] in chunks {
+            if cx < 0
+                || cy < 0
+                || cx as u32 >= self.manifest.chunks_x()
+                || cy as u32 >= self.manifest.chunks_y()
+            {
+                bail!("override chunk ({cx}, {cy}) is outside the grid");
+            }
+            if priorities.get(&(cx, cy)).is_some_and(|&p| p >= priority) {
+                continue;
+            }
+            let path = dir.join(format!("{cx}_{cy}.bmc"));
+            let chunk = Chunk::read_file(&path)?;
+            if (chunk.cx, chunk.cy) != (cx, cy) {
+                bail!(
+                    "{} declares coordinates ({}, {})",
+                    path.display(),
+                    chunk.cx,
+                    chunk.cy
+                );
+            }
+            self.chunks.insert((cx, cy), chunk);
+            priorities.insert((cx, cy), priority);
+            applied += 1;
+        }
+        Ok(applied)
     }
 
     pub fn cell_count(&self) -> u64 {
@@ -205,6 +254,15 @@ name = "Uruguai"
         assert_eq!(m.entity(2).unwrap().id, "pais:UY");
         assert!(m.entity(0).is_none());
         assert!(LevelManifest::parse(&EXAMPLE.replace("index = 2", "index = 1")).is_err());
+    }
+
+    #[test]
+    fn level_dir_layout() {
+        assert_eq!(entity_dir_name("municipio:4314902"), "municipio_4314902");
+        assert_eq!(
+            level_dir(Path::new("/r"), 3, "municipio:4314902"),
+            PathBuf::from("/r/3/municipio_4314902")
+        );
     }
 
     #[test]

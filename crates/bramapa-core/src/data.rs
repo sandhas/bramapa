@@ -20,6 +20,22 @@ pub struct Index {
     pub addons: Vec<IndexAddon>,
     #[serde(default)]
     pub properties: Vec<IndexProperty>,
+    #[serde(default)]
+    pub map_overrides: Vec<IndexMapOverride>,
+}
+
+/// A manual map override shipped by an addon (chunks replacing procedural ones).
+#[derive(Clone, Debug, Deserialize)]
+pub struct IndexMapOverride {
+    pub addon: String,
+    pub level: u8,
+    pub entity: String,
+    /// Directory with `<cx>_<cy>.bmc`, relative to the build dir.
+    pub path: String,
+    #[serde(default)]
+    pub chunks: Vec<[i32; 2]>,
+    #[serde(default)]
+    pub priority: i32,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -261,6 +277,9 @@ pub struct DataStore {
     pub addons: Vec<(String, String)>,
     /// Global period bounds over all rows (days), None when empty.
     pub period_bounds: Option<(i32, i32)>,
+    pub map_overrides: Vec<IndexMapOverride>,
+    /// Directory the store was loaded from (override paths are relative to it).
+    pub dir: std::path::PathBuf,
 }
 
 impl DataStore {
@@ -323,6 +342,8 @@ impl DataStore {
             properties,
             addons,
             period_bounds: bounds,
+            map_overrides: index.map_overrides,
+            dir: dir.to_path_buf(),
         })
     }
 
@@ -541,6 +562,7 @@ period_max = "2022"
         .unwrap();
         let store = DataStore::load(&dir).unwrap();
         assert_eq!(store.properties.len(), 1);
+        assert!(store.map_overrides.is_empty());
         assert_eq!(store.period_bounds, Some((18993, 19357)));
         let found = store.for_entity("estado:43");
         assert_eq!(found.len(), 1);

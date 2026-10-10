@@ -16,5 +16,5 @@ pub const CHUNK_SIZE: u16 = 64;
 
 pub use chunk::{Chunk, ChunkObject, NO_PERIOD};
 pub use data::{DataStore, PropertyData, Row, Value};
-pub use level::{EntityDef, Level, LevelManifest};
+pub use level::{entity_dir_name, level_dir, EntityDef, Level, LevelManifest};
 pub use tileset::{TileClass, TileDef, Tileset};

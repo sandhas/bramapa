@@ -65,6 +65,17 @@ pub struct Model<'a> {
     pub adapter: &'a str,
     pub show: bool,
     pub data: Option<&'a DataStore>,
+    pub stack: &'a [crate::Crumb],
+    /// Name of the selected entity's child level when one exists.
+    pub can_enter: Option<String>,
+    /// Fade-in alpha (1 = black) right after a level switch.
+    pub fade: Option<f32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UiAction {
+    Enter,
+    Back,
 }
 
 /// Mutable UI state that survives between frames.
@@ -75,6 +86,8 @@ pub struct UiState {
     /// Bounds offered by the sliders.
     pub year_min: i32,
     pub year_max: i32,
+    /// Navigation request raised by a button this frame.
+    pub action: Option<UiAction>,
 }
 
 impl UiState {
@@ -88,6 +101,7 @@ impl UiState {
             year_end: hi,
             year_min: lo,
             year_max: hi,
+            action: None,
         }
     }
 }
@@ -173,6 +187,16 @@ fn entity_panel(ctx: &egui::Context, m: &Model, st: &mut UiState) {
         .default_pos([12.0, 360.0])
         .default_width(360.0)
         .show(ctx, |ui| {
+            if let Some(name) = &m.can_enter {
+                if ui
+                    .button(format!("▶ Entrar em {name}"))
+                    .on_hover_text("Duplo clique ou Enter")
+                    .clicked()
+                {
+                    st.action = Some(UiAction::Enter);
+                }
+                ui.separator();
+            }
             let Some(data) = m.data else {
                 ui.label("Sem dados carregados (use --data <dir de build>).");
                 return;
@@ -254,6 +278,18 @@ fn entity_panel(ctx: &egui::Context, m: &Model, st: &mut UiState) {
 }
 
 pub fn draw(ctx: &egui::Context, m: &Model, st: &mut UiState) {
+    if let Some(a) = m.fade {
+        ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("fade"),
+        ))
+        .rect_filled(
+            ctx.content_rect(),
+            0.0,
+            egui::Color32::from_black_alpha((a * 255.0) as u8),
+        );
+        ctx.request_repaint();
+    }
     if !m.show {
         return;
     }
@@ -262,6 +298,26 @@ pub fn draw(ctx: &egui::Context, m: &Model, st: &mut UiState) {
         .default_pos([12.0, 12.0])
         .resizable(false)
         .show(ctx, |ui| {
+            if m.stack.len() > 1 || m.can_enter.is_some() {
+                ui.horizontal_wrapped(|ui| {
+                    if m.stack.len() > 1
+                        && ui.button("◀").on_hover_text("Voltar (Backspace)").clicked()
+                    {
+                        st.action = Some(UiAction::Back);
+                    }
+                    for (i, c) in m.stack.iter().enumerate() {
+                        if i > 0 {
+                            ui.label("›");
+                        }
+                        if i + 1 == m.stack.len() {
+                            ui.strong(&c.name);
+                        } else {
+                            ui.label(&c.name);
+                        }
+                    }
+                });
+                ui.separator();
+            }
             let g = &m.level.manifest.grid;
             egui::Grid::new("stats")
                 .num_columns(2)
