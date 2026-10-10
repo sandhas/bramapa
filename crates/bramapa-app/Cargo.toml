@@ -1,0 +1,36 @@
+[package]
+name = "bramapa-app"
+description = "Bramapa: aplicativo nativo (winit + egui)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "bramapa"
+path = "src/main.rs"
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+[dependencies]
+bramapa-core.workspace = true
+bramapa-render.workspace = true
+anyhow.workspace = true
+log.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+egui-winit.workspace = true
+pollster.workspace = true
+glam.workspace = true
+image.workspace = true
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+env_logger.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+winit = { workspace = true, features = ["android-game-activity"] }
+android_logger = "0.15"

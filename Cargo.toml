@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = ["crates/bramapa-core", "crates/bramapa-render", "crates/bramapa-app"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/sandhas/bramapa"
+rust-version = "1.85"
+
+[workspace.dependencies]
+bramapa-core = { path = "crates/bramapa-core" }
+bramapa-render = { path = "crates/bramapa-render" }
+anyhow = "1.0"
+bytemuck = { version = "1.25", features = ["derive"] }
+glam = "0.34"
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+toml = "1.1"
+zstd = "0.14"
+image = { version = "0.25", default-features = false, features = ["png"] }
+wgpu = "30.0"
+winit = "0.30"
+egui = "0.36"
+egui-wgpu = { version = "0.36", features = ["winit"] }
+egui-winit = { version = "0.36", default-features = false }
+pollster = "1.0"
+env_logger = "0.11"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev.package."*"]
+opt-level = 2
