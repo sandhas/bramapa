@@ -120,6 +120,11 @@ O keystore `.android/dev.keystore` é só de desenvolvimento e fica fora do git.
 app usa o nível sintético e o atlas embutido; nível/tileset dos assets do APK vêm na Fase 2.
 Toque: arrastar move a câmera (pinça para zoom ainda não existe).
 
+## Contribuir
+
+Leia [`docs/contribuindo.md`](docs/contribuindo.md): addons de dados (no `bramapa-data` ou no seu
+próprio repositório), overrides manuais de mapa, arte de tiles, pipeline e motor.
+
 ## Orçamento de performance
 
 | Métrica | Desktop | Android médio |
@@ -140,6 +145,11 @@ Medido na Fase 0/1 (512×512 células = 266 mil instâncias, 1 draw call por chu
 | Desktop GTX 1070, nível 3 Porto Alegre (529 chunks, 2,59 M instâncias), zoom 1/16, debug | 142 ms (upload) | 4,2 ms (240 fps, 465 draw calls) | — |
 
 O emulador não mede celular: a primeira medição em aparelho real está pendente.
+
+Benchmark reproduzível em [`docs/benchmark.md`](docs/benchmark.md) (`scripts/bench.sh`, ou
+`bramapa --bench saida.md`): renderização fora da tela em 1080p com espera da GPU, por isso os
+números não sofrem o teto do monitor. Resumo na GTX 1070 em release: Brasil inteiro (1,07 M
+instâncias) 1,6 ms por quadro, Porto Alegre inteira (2,3 M) 3,2 ms, zoom 1x 0,3 ms.
 
 ## Fases
 

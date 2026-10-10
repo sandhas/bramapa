@@ -16,6 +16,7 @@ bramapa [opções]
   --zoom <z>          zoom inicial: 1/32 … 1/2, 1 … 6 (padrão 1)
   --frames <n>        encerra após n quadros (para testes)
   --no-vsync          desliga o vsync (medição de performance)
+  --bench <arquivo.md> roda o cenário fixo de benchmark (7 zooms × 120 quadros) e anexa a tabela
   --no-ui             inicia com o painel escondido (F1 mostra)
   --select <n>        inicia com a entidade de índice n selecionada (para testes)
   --enter             entra no nível da entidade selecionada logo após o primeiro quadro (testes)
@@ -85,6 +86,14 @@ fn main() -> anyhow::Result<()> {
                 };
             }
             "--no-vsync" => opts.vsync = false,
+            "--bench" => {
+                opts.bench =
+                    Some(PathBuf::from(args.next().ok_or_else(|| {
+                        anyhow::anyhow!("--bench precisa de valor")
+                    })?));
+                opts.vsync = false;
+                opts.show_ui = false;
+            }
             "--no-ui" => opts.show_ui = false,
             "--enter" => opts.enter_on_start = true,
             "--select" => {

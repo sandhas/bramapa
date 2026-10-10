@@ -41,6 +41,8 @@ pub struct Options {
     /// Enter the selected entity's level after the first frame (tests/screenshots).
     pub enter_on_start: bool,
     pub screenshot: Option<PathBuf>,
+    /// Run the fixed benchmark scenario and append a Markdown table to this file.
+    pub bench: Option<PathBuf>,
 }
 
 impl Default for Options {
@@ -60,6 +62,7 @@ impl Default for Options {
             select: 0,
             enter_on_start: false,
             screenshot: None,
+            bench: None,
         }
     }
 }
@@ -258,6 +261,40 @@ pub struct App {
     /// When a level transition started (drives the fade-in).
     fade_start: Option<Instant>,
     last_click: Option<(Instant, u16)>,
+    bench: Option<Bench>,
+    /// Milliseconds spent loading + uploading the current level.
+    last_upload_ms: f32,
+}
+
+/// Fixed benchmark scenario: each zoom step from the grid centre, warm-up then measured frames.
+const BENCH_ZOOMS: [f32; 7] = [
+    1.0 / 32.0,
+    1.0 / 16.0,
+    1.0 / 8.0,
+    1.0 / 4.0,
+    1.0 / 2.0,
+    1.0,
+    2.0,
+];
+const BENCH_WARMUP: u32 = 30;
+const BENCH_WIDTH: u32 = 1920;
+const BENCH_HEIGHT: u32 = 1080;
+const BENCH_FRAMES: u32 = 120;
+
+struct Bench {
+    out: PathBuf,
+    stage: usize,
+    frame_in_stage: u32,
+    samples: Vec<f32>,
+    rows: Vec<String>,
+}
+
+/// Resident set size in MiB (Linux only; None elsewhere).
+fn rss_mib() -> Option<f32> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find(|l| l.starts_with("VmRSS:"))?;
+    let kb: f32 = line.split_whitespace().nth(1)?.parse().ok()?;
+    Some(kb / 1024.0)
 }
 
 /// Largest zoom step that shows the whole grid in the viewport.
@@ -298,12 +335,13 @@ impl App {
                 &self.content.tileset,
                 &scene.atlas,
             );
+            self.last_upload_ms = t.elapsed().as_secs_f32() * 1000.0;
             log::info!(
                 "level '{}': {} chunks, {} instances loaded+uploaded in {:.1} ms",
                 level.manifest.level.name,
                 scene.renderer.stats.chunks_total,
                 scene.renderer.stats.instances_total,
-                t.elapsed().as_secs_f32() * 1000.0
+                self.last_upload_ms
             );
         }
         match push {
@@ -375,6 +413,13 @@ impl App {
             selected_entity: opts.select,
             ..Default::default()
         };
+        let bench = opts.bench.clone().map(|out| Bench {
+            out,
+            stage: 0,
+            frame_in_stage: 0,
+            samples: Vec::with_capacity(BENCH_FRAMES as usize),
+            rows: Vec::new(),
+        });
         Ok(Self {
             opts,
             content,
@@ -389,6 +434,8 @@ impl App {
             ui_state,
             fade_start: None,
             last_click: None,
+            bench,
+            last_upload_ms: 0.0,
         })
     }
 
@@ -400,10 +447,15 @@ impl App {
             attrs = attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
         }
         let window = Arc::new(event_loop.create_window(attrs)?);
-        let gpu = pollster::block_on(Gpu::new(window.clone(), self.opts.vsync))?;
+        let mut gpu = pollster::block_on(Gpu::new(window.clone(), self.opts.vsync))?;
         let size = window.inner_size();
         self.camera
             .set_viewport(size.width as f32, size.height as f32);
+        if self.bench.is_some() {
+            gpu.enable_offscreen(BENCH_WIDTH, BENCH_HEIGHT);
+            self.camera
+                .set_viewport(BENCH_WIDTH as f32, BENCH_HEIGHT as f32);
+        }
 
         let mut renderer =
             TilemapRenderer::new(&gpu.device, gpu.config.format, bramapa_render::DEPTH_FORMAT);
@@ -432,11 +484,12 @@ impl App {
             &self.content.tileset,
             &atlas,
         );
+        self.last_upload_ms = t.elapsed().as_secs_f32() * 1000.0;
         log::info!(
             "uploaded {} chunks, {} instances in {:.1} ms ({} unknown tile ids)",
             renderer.stats.chunks_total,
             renderer.stats.instances_total,
-            t.elapsed().as_secs_f32() * 1000.0,
+            self.last_upload_ms,
             renderer.stats.unknown_tile_ids
         );
 
@@ -483,17 +536,28 @@ impl App {
         let Some(scene) = self.scene.as_mut() else {
             return;
         };
-        let frame_tex = match scene.gpu.acquire() {
-            Ok(t) => t,
-            Err(gpu::Acquire::Reconfigured) => {
-                scene.window.request_redraw();
-                return;
+        let offscreen = scene.gpu.offscreen_view().is_some();
+        let frame_tex = if offscreen {
+            None
+        } else {
+            match scene.gpu.acquire() {
+                Ok(t) => Some(t),
+                Err(gpu::Acquire::Reconfigured) => {
+                    scene.window.request_redraw();
+                    return;
+                }
+                Err(gpu::Acquire::Skip) => return,
             }
-            Err(gpu::Acquire::Skip) => return,
         };
-        let view = frame_tex
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let surface_view = frame_tex.as_ref().map(|t| {
+            t.texture
+                .create_view(&wgpu::TextureViewDescriptor::default())
+        });
+        let view = match (&surface_view, scene.gpu.offscreen_view()) {
+            (Some(v), _) => v.clone(),
+            (None, Some(v)) => v.clone(),
+            (None, None) => return,
+        };
         let mut encoder =
             scene
                 .gpu
@@ -633,10 +697,9 @@ impl App {
             .opts
             .exit_after_frames
             .is_some_and(|n| self.frame + 1 >= n);
-        let readback = if is_last && self.opts.screenshot.is_some() {
-            Some(scene.gpu.copy_to_buffer(&mut encoder, &frame_tex.texture))
-        } else {
-            None
+        let readback = match (&frame_tex, is_last && self.opts.screenshot.is_some()) {
+            (Some(t), true) => Some(scene.gpu.copy_to_buffer(&mut encoder, &t.texture)),
+            _ => None,
         };
 
         scene.gpu.queue.submit(
@@ -644,8 +707,14 @@ impl App {
                 .into_iter()
                 .chain(std::iter::once(encoder.finish())),
         );
-        scene.window.pre_present_notify();
-        scene.gpu.queue.present(frame_tex);
+        match frame_tex {
+            Some(t) => {
+                scene.window.pre_present_notify();
+                scene.gpu.queue.present(t);
+            }
+            // Benchmark: no present; wait for the GPU so the frame time includes its work.
+            None => scene.gpu.wait_idle(),
+        }
 
         if let Some(rb) = readback {
             let path = self.opts.screenshot.clone().unwrap();
@@ -689,6 +758,105 @@ impl App {
             );
             event_loop.exit();
         }
+        if self.bench.is_some() {
+            self.bench_step(dt, event_loop);
+        }
+    }
+
+    /// Advance the benchmark scenario by one frame; writes the report and exits at the end.
+    fn bench_step(&mut self, dt: f32, event_loop: &ActiveEventLoop) {
+        let stats = self
+            .scene
+            .as_ref()
+            .map(|s| s.renderer.stats)
+            .unwrap_or_default();
+        let Some(b) = self.bench.as_mut() else { return };
+        if b.frame_in_stage == 0 {
+            let g = &self.content.level.manifest.grid;
+            self.camera.center = bramapa_render::iso::IsoGeometry::DEFAULT
+                .cell_center(g.width as f32 * 0.5, g.height as f32 * 0.5);
+            self.camera.set_zoom(BENCH_ZOOMS[b.stage]);
+            b.samples.clear();
+        } else if b.frame_in_stage > BENCH_WARMUP {
+            b.samples.push(dt * 1000.0);
+        }
+        b.frame_in_stage += 1;
+        if b.frame_in_stage <= BENCH_WARMUP + BENCH_FRAMES {
+            return;
+        }
+        let mut sorted = b.samples.clone();
+        sorted.sort_by(|a, c| a.partial_cmp(c).unwrap());
+        let avg = sorted.iter().sum::<f32>() / sorted.len().max(1) as f32;
+        let p99 =
+            sorted[((sorted.len() as f32 * 0.99) as usize).min(sorted.len().saturating_sub(1))];
+        b.rows.push(format!(
+            "| {} | {:.2} | {:.2} | {:.0} | {} | {} | {} |",
+            self.camera.zoom_label(),
+            avg,
+            p99,
+            if avg > 0.0 { 1000.0 / avg } else { 0.0 },
+            stats.chunks_drawn,
+            stats.draw_calls,
+            stats.instances_drawn
+        ));
+        b.stage += 1;
+        b.frame_in_stage = 0;
+        if b.stage < BENCH_ZOOMS.len() {
+            return;
+        }
+        let (gpu, size) = self
+            .scene
+            .as_ref()
+            .map(|s| {
+                (
+                    s.gpu.adapter_info.clone(),
+                    (s.gpu.config.width, s.gpu.config.height),
+                )
+            })
+            .unwrap_or_default();
+        let m = &self.content.level.manifest;
+        let mut md = String::new();
+        md.push_str(&format!(
+            "### {} · `{}` · {}×{} células · {} chunks · {} instâncias\n\n",
+            m.level.name,
+            m.level.entity,
+            m.grid.width,
+            m.grid.height,
+            stats.chunks_total,
+            stats.instances_total
+        ));
+        md.push_str(&format!(
+            "GPU {} · janela {}×{} · perfil {} · vsync {} · carga+upload {:.0} ms · RSS {}\n\n",
+            gpu,
+            size.0,
+            size.1,
+            if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            },
+            if self.opts.vsync { "on" } else { "off" },
+            self.last_upload_ms,
+            rss_mib().map_or("n/d".to_string(), |r| format!("{r:.0} MiB"))
+        ));
+        md.push_str("| zoom | quadro médio (ms) | p99 (ms) | fps | chunks | draw calls | instâncias |\n|---|---|---|---|---|---|---|\n");
+        for r in &b.rows {
+            md.push_str(r);
+            md.push('\n');
+        }
+        md.push('\n');
+        if let Err(e) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&b.out)
+            .and_then(|mut f| std::io::Write::write_all(&mut f, md.as_bytes()))
+        {
+            log::error!("writing benchmark {}: {e}", b.out.display());
+        } else {
+            log::info!("benchmark appended to {}", b.out.display());
+        }
+        print!("{md}");
+        event_loop.exit();
     }
 
     fn apply_keys(&mut self, dt: f32) {
@@ -786,7 +954,7 @@ impl ApplicationHandler for App {
         }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => {
+            WindowEvent::Resized(size) if !scene.gpu.is_offscreen() => {
                 scene.gpu.resize(size.width, size.height);
                 self.camera
                     .set_viewport(size.width as f32, size.height as f32);

@@ -14,6 +14,8 @@ pub struct Gpu {
     pub depth_view: wgpu::TextureView,
     pub adapter_info: String,
     can_copy: bool,
+    /// Offscreen colour target (benchmark mode renders here and never presents).
+    offscreen: Option<(wgpu::Texture, wgpu::TextureView)>,
 }
 
 pub enum Acquire {
@@ -101,6 +103,7 @@ impl Gpu {
             depth_view,
             adapter_info,
             can_copy,
+            offscreen: None,
         })
     }
 
@@ -112,6 +115,47 @@ impl Gpu {
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
         self.depth_view = create_depth(&self.device, width, height);
+    }
+
+    fn create_offscreen(&self) -> (wgpu::Texture, wgpu::TextureView) {
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("offscreen"),
+            size: wgpu::Extent3d {
+                width: self.config.width,
+                height: self.config.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        (tex, view)
+    }
+
+    /// Switch to offscreen rendering at a fixed size (no present, no compositor cap, no
+    /// dependence on the window). Used by `--bench`; the surface is not used afterwards.
+    pub fn enable_offscreen(&mut self, width: u32, height: u32) {
+        self.config.width = width;
+        self.config.height = height;
+        self.depth_view = create_depth(&self.device, width, height);
+        self.offscreen = Some(self.create_offscreen());
+    }
+
+    pub fn is_offscreen(&self) -> bool {
+        self.offscreen.is_some()
+    }
+
+    pub fn offscreen_view(&self) -> Option<&wgpu::TextureView> {
+        self.offscreen.as_ref().map(|(_, v)| v)
+    }
+
+    /// Block until all submitted GPU work finished (benchmark timing).
+    pub fn wait_idle(&self) {
+        let _ = self.device.poll(wgpu::PollType::wait_indefinitely());
     }
 
     pub fn acquire(&mut self) -> std::result::Result<wgpu::SurfaceTexture, Acquire> {
