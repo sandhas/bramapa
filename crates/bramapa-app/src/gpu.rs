@@ -75,7 +75,11 @@ impl Gpu {
         if let Some(f) = caps.formats.iter().find(|f| !f.is_srgb()) {
             config.format = *f;
         }
-        config.present_mode = if vsync { wgpu::PresentMode::AutoVsync } else { wgpu::PresentMode::AutoNoVsync };
+        config.present_mode = if vsync {
+            wgpu::PresentMode::AutoVsync
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
         let can_copy = caps.usages.contains(wgpu::TextureUsages::COPY_SRC);
         if can_copy {
             config.usage |= wgpu::TextureUsages::COPY_SRC;
