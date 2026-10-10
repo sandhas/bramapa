@@ -31,6 +31,8 @@ pub struct Options {
     pub exit_after_frames: Option<u32>,
     /// Vsync on (default). Off only for benchmarking.
     pub vsync: bool,
+    pub show_ui: bool,
+    pub fullscreen: bool,
     pub screenshot: Option<PathBuf>,
 }
 
@@ -44,6 +46,8 @@ impl Default for Options {
             zoom: 1,
             exit_after_frames: None,
             vsync: true,
+            show_ui: true,
+            fullscreen: false,
             screenshot: None,
         }
     }
@@ -158,6 +162,7 @@ impl App {
             .unwrap_or((g.width as f32 * 0.5, g.height as f32 * 0.5));
         camera.center = bramapa_render::iso::IsoGeometry::DEFAULT.cell_center(cx, cy);
         camera.zoom = opts.zoom.clamp(camera.min_zoom, camera.max_zoom);
+        let show_ui = opts.show_ui;
         Ok(Self {
             opts,
             content,
@@ -168,14 +173,17 @@ impl App {
             last_frame: Instant::now(),
             frame: 0,
             fps: ui::FpsCounter::default(),
-            show_ui: true,
+            show_ui,
         })
     }
 
     fn create_scene(&mut self, event_loop: &ActiveEventLoop) -> Result<Scene> {
-        let attrs = Window::default_attributes()
+        let mut attrs = Window::default_attributes()
             .with_title("Bramapa")
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
+        if self.opts.fullscreen {
+            attrs = attrs.with_fullscreen(Some(winit::window::Fullscreen::Borderless(None)));
+        }
         let window = Arc::new(event_loop.create_window(attrs)?);
         let gpu = pollster::block_on(Gpu::new(window.clone(), self.opts.vsync))?;
         let size = window.inner_size();

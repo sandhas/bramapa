@@ -7,7 +7,7 @@ motor nativo + modelo de dados extensível por addons declarativos da comunidade
 
 **Performance é o critério 1. Rodar no máximo de dispositivos é o 2.**
 
-![Fase 0: cidade sintética](screenshots/fase0-cidade.png)
+![Fase 1: litoral com autotiling](screenshots/fase1-litoral.png)
 
 ## Os quatro repositórios
 
@@ -48,6 +48,7 @@ cargo run --release -- \
   --level ../bramapa-data-test/level-test \
   --tileset ../bramapa-tileset            # nível gerado pelo pipeline + tileset do repo de arte
 cargo run --release -- --center 353,278 --zoom 2 --frames 120 --screenshot /tmp/bramapa.png
+cargo run --release -- --no-ui --fullscreen --no-vsync   # benchmark
 cargo test --workspace
 ```
 
@@ -109,7 +110,10 @@ O emulador não mede celular: a primeira medição em aparelho real está penden
 ## Fases
 
 0. **Fundação** (feita): spec v0, 4 repos, app desenha nível sintético e nível do pipeline.
-1. **Render**: autotiling no pipeline, build Android no aparelho, primeira medição em celular.
+1. **Render** (feita, exceto medição em aparelho real): autotiling no pipeline guiado pelo
+   `tiles.toml`, variantes de litoral no tileset, APK via `cargo-apk` rodando no emulador,
+   vsync por padrão e flags de benchmark. Pendente: rodar `bramapa-arm64.apk` num celular médio
+   e registrar fps/RAM na tabela acima.
 2. **Nível 1**: Brasil + vizinhos a partir de Natural Earth, malhas IBGE e MapBiomas.
 3. **Dados**: build binário do `ibge-core`, painel de entidade, seletor de intervalo temporal.
 4. **Níveis 2 e 3**: RS e Porto Alegre, transições, override manual de exemplo.

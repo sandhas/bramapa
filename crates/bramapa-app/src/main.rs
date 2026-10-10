@@ -14,6 +14,8 @@ bramapa [opções]
   --zoom <n>          zoom inicial inteiro, 1 a 6 (padrão 1)
   --frames <n>        encerra após n quadros (para testes)
   --no-vsync          desliga o vsync (medição de performance)
+  --no-ui             inicia com o painel escondido (F1 mostra)
+  --fullscreen        janela em tela cheia sem borda
   --screenshot <png>  salva o último quadro em PNG (com --frames)
   -h, --help
 ";
@@ -64,6 +66,8 @@ fn main() -> anyhow::Result<()> {
                     .parse()?
             }
             "--no-vsync" => opts.vsync = false,
+            "--no-ui" => opts.show_ui = false,
+            "--fullscreen" => opts.fullscreen = true,
             "--frames" => {
                 opts.exit_after_frames = Some(
                     args.next()
