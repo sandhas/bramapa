@@ -62,11 +62,31 @@ Controles: arrastar com o mouse move, roda/`+`/`-` dão zoom (sempre inteiro), s
 - **cargo-ndk**: `cargo install cargo-ndk`. Android SDK + NDK instalados (variável `ANDROID_HOME`).
 - **GPU**: qualquer coisa com Vulkan, Metal, DX12 ou GLES 3.0. `WGPU_BACKEND=gl` força OpenGL.
 
-### Android (Fase 1)
+### Android
 
-O crate `bramapa-app` já é `cdylib` com `android_main` (via `android-game-activity`). O que falta
-na Fase 1: projeto Gradle mínimo com `GameActivity`, `cargo ndk -t arm64-v8a -o app/src/main/jniLibs build`,
-e carregar nível/tileset dos assets do APK. O toque já está mapeado para mover a câmera.
+Sem Gradle: o APK é montado pelo `cargo-apk` (`NativeActivity`). Metadados em
+`crates/bramapa-app/Cargo.toml` (`[package.metadata.android]`).
+
+```sh
+# uma vez
+curl -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path     # ou: sudo pacman -S rustup
+~/.cargo/bin/rustup target add aarch64-linux-android x86_64-linux-android
+~/.cargo/bin/cargo install cargo-apk
+sdkmanager "ndk;27.2.12479018" "platforms;android-34"
+keytool -genkeypair -keystore .android/dev.keystore -alias bramapa-dev -keyalg RSA \
+  -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Bramapa dev"
+
+# a cada build (celular real = aarch64; emulador x86_64 = x86_64-linux-android)
+export ANDROID_HOME=~/Android/Sdk ANDROID_NDK_ROOT=~/Android/Sdk/ndk/27.2.12479018
+PATH=~/.cargo/bin:$PATH cargo apk build -p bramapa-app --lib --release --target aarch64-linux-android
+adb install -r target/release/apk/bramapa.apk
+adb shell am start -n br.bramapa.app/android.app.NativeActivity
+adb logcat -s bramapa:*          # imprime fps/draw calls a cada 300 quadros
+```
+
+O keystore `.android/dev.keystore` é só de desenvolvimento e fica fora do git. No Android o
+app usa o nível sintético e o atlas embutido; nível/tileset dos assets do APK vêm na Fase 2.
+Toque: arrastar move a câmera (pinça para zoom ainda não existe).
 
 ## Orçamento de performance
 
@@ -77,8 +97,14 @@ e carregar nível/tileset dos assets do APK. O toque já está mapeado para move
 | Transição de nível | < 300 ms | < 500 ms |
 | RAM | < 500 MB | < 300 MB |
 
-Medido na Fase 0 (GTX 1070, debug, 512×512 células = 266 mil instâncias): upload de 64 chunks em
-12 ms, 240 fps (limite do compositor), 1 draw call por chunk-camada visível.
+Medido na Fase 0/1 (512×512 células = 266 mil instâncias, 1 draw call por chunk-camada visível):
+
+| Onde | Upload de 64 chunks | Quadro | RAM |
+|---|---|---|---|
+| Desktop GTX 1070, debug, vsync off | 12 ms | 4,2 ms (240 fps, teto do compositor) | — |
+| Emulador Android x86_64 (GPU do host), release | 39 ms | 1,5 ms (sem vsync) | 38 MB PSS |
+
+O emulador não mede celular: a primeira medição em aparelho real está pendente.
 
 ## Fases
 

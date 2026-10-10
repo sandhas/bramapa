@@ -32,7 +32,7 @@ pub struct Readback {
 }
 
 impl Gpu {
-    pub async fn new(window: Arc<Window>) -> Result<Self> {
+    pub async fn new(window: Arc<Window>, vsync: bool) -> Result<Self> {
         // Backends from WGPU_BACKEND if set, else Vulkan/Metal/DX12 with GL as fallback.
         let mut desc = wgpu::InstanceDescriptor::new_without_display_handle_from_env();
         if wgpu::Backends::from_env().is_none() {
@@ -75,6 +75,7 @@ impl Gpu {
         if let Some(f) = caps.formats.iter().find(|f| !f.is_srgb()) {
             config.format = *f;
         }
+        config.present_mode = if vsync { wgpu::PresentMode::AutoVsync } else { wgpu::PresentMode::AutoNoVsync };
         let can_copy = caps.usages.contains(wgpu::TextureUsages::COPY_SRC);
         if can_copy {
             config.usage |= wgpu::TextureUsages::COPY_SRC;

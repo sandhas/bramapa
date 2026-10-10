@@ -29,6 +29,8 @@ pub struct Options {
     /// Initial integer zoom.
     pub zoom: u32,
     pub exit_after_frames: Option<u32>,
+    /// Vsync on (default). Off only for benchmarking.
+    pub vsync: bool,
     pub screenshot: Option<PathBuf>,
 }
 
@@ -41,6 +43,7 @@ impl Default for Options {
             center: None,
             zoom: 1,
             exit_after_frames: None,
+            vsync: true,
             screenshot: None,
         }
     }
@@ -174,7 +177,7 @@ impl App {
             .with_title("Bramapa")
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
         let window = Arc::new(event_loop.create_window(attrs)?);
-        let gpu = pollster::block_on(Gpu::new(window.clone()))?;
+        let gpu = pollster::block_on(Gpu::new(window.clone(), self.opts.vsync))?;
         let size = window.inner_size();
         self.camera
             .set_viewport(size.width as f32, size.height as f32);
@@ -403,6 +406,19 @@ impl App {
             }
         }
         self.frame += 1;
+        if self.frame % 300 == 0 {
+            // Periodic line for logcat / terminal benchmarking (every ~5 s at 60 fps).
+            log::info!(
+                "frame {}: {:.1} fps ({:.2} ms), {} chunks, {} draw calls, {} instances, zoom {}x",
+                self.frame,
+                self.fps.fps(),
+                self.fps.frame_ms(),
+                scene.renderer.stats.chunks_drawn,
+                scene.renderer.stats.draw_calls,
+                scene.renderer.stats.instances_drawn,
+                self.camera.zoom
+            );
+        }
         if is_last {
             log::info!(
                 "exiting after {} frames (avg {:.1} fps)",

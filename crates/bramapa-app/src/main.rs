@@ -13,6 +13,7 @@ bramapa [opções]
   --center <x>,<y>    célula inicial no centro da tela (padrão: centro da grade)
   --zoom <n>          zoom inicial inteiro, 1 a 6 (padrão 1)
   --frames <n>        encerra após n quadros (para testes)
+  --no-vsync          desliga o vsync (medição de performance)
   --screenshot <png>  salva o último quadro em PNG (com --frames)
   -h, --help
 ";
@@ -62,6 +63,7 @@ fn main() -> anyhow::Result<()> {
                     .ok_or_else(|| anyhow::anyhow!("--zoom precisa de valor"))?
                     .parse()?
             }
+            "--no-vsync" => opts.vsync = false,
             "--frames" => {
                 opts.exit_after_frames = Some(
                     args.next()

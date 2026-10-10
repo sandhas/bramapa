@@ -113,6 +113,11 @@ tileset real pode usar outros ids; o que vale é o `tiles.toml` referenciado pel
   quando o vizinho tem a **mesma `cover`**. Vizinhos em coordenadas de grade: N = `(x, y−1)`,
   E = `(x+1, y)`, S = `(x, y+1)`, W = `(x−1, y)`. Fora da grade conta como "mesma cover" (a borda
   do mapa não ganha contorno). O pipeline calcula a máscara; o motor só vê ids de tile.
+- **Projeção de tela** (fixa, o motor implementa exatamente isto): a célula `(x, y)` tem o topo do
+  losango em `sx = (x − y) · tile_width / 2`, `sy = (x + y) · tile_height / 2`, com `y` de tela
+  crescendo para baixo. Logo o vizinho N `(x, y−1)` encosta na aresta **superior direita**, E
+  `(x+1, y)` na **inferior direita**, S `(x, y+1)` na **inferior esquerda** e W `(x−1, y)` na
+  **superior esquerda**. Covers diferentes de água (`agua` × `oceano`) contam como borda.
 - **Ids das variantes de autotiling do placeholder**: `agua` usa `100 + máscara` (100..115),
   `oceano` usa `120 + máscara` (120..135); todas animadas com 4 frames. Os ids base 2 e 3 continuam
   valendo como `default` (máscara 15, cercado pela mesma cover).

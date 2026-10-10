@@ -32,5 +32,30 @@ image.workspace = true
 env_logger.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
-winit = { workspace = true, features = ["android-game-activity"] }
+winit = { workspace = true, features = ["android-native-activity"] }
 android_logger = "0.15"
+
+# cargo-apk (`cargo apk build -p bramapa-app --lib`): no Gradle project needed for Fase 1.
+[package.metadata.android]
+package = "br.bramapa.app"
+build_targets = ["aarch64-linux-android", "x86_64-linux-android"]
+apk_name = "bramapa"
+assets = "../../assets"
+
+[package.metadata.android.sdk]
+min_sdk_version = 26
+target_sdk_version = 34
+
+[package.metadata.android.application]
+label = "Bramapa"
+
+[package.metadata.android.application.activity]
+orientation = "landscape"
+config_changes = "orientation|keyboardHidden|screenSize"
+
+# Dev-only keystore (gitignored). Generate with:
+#   keytool -genkeypair -keystore .android/dev.keystore -alias bramapa-dev -keyalg RSA \
+#     -keysize 2048 -validity 10000 -storepass android -keypass android -dname "CN=Bramapa dev"
+[package.metadata.android.signing.release]
+path = "../../.android/dev.keystore"
+keystore_password = "android"
